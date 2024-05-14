@@ -1,0 +1,1166 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+---
+title: "Main Analysis+Heterogeneity+Moderator"
+author: "Pengyuan Yang"
+date: "2023-01-10"
+output: html_document
+---
+
+
+```{r}
+library(readxl)
+library(writexl)
+library(dplyr)
+library(clubSandwich)
+library(metafor)
+```
+
+
+#-----Data Transformation-----#
+```{r}
+
+
+LogORData <- read_xlsx("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Preprocessed/LogORData_main_0205.xlsx")
+#LogORData <- subset(LogORData, LogORData$`only subgroup analysis (Y/N)`!="Y") #No subgroup analysis
+colnames(LogORData)[c(1,2,4,7,9,76)] <- c("Author", "Year", "Study", "Country", "Sample", "Design") #Simplify some colnames
+
+LogORData <- subset(LogORData, LogORData$Author!= "Dennison et al.") #Exclude outliers
+LogORData <- subset(LogORData, !(Author == "Chen et al." & Year == "2022"))
+Casecontrol <- subset(LogORData, Design=="Case-control")
+Crosssectional <- subset(LogORData, Design=="Cross-sectional")
+Cohort <- subset(LogORData, Design=="Cohort study")
+LogORData <- rbind(Casecontrol[order(Casecontrol$Year, Casecontrol$Author,decreasing = TRUE),],
+                   Crosssectional[order(Crosssectional$Year, Crosssectional$Author,decreasing = TRUE),],
+                   Cohort[order(Cohort$Year, Cohort$Author,decreasing = TRUE),])
+
+LogORData$Design <- factor(LogORData$Design, levels = c("Cohort study", "Cross-sectional","Case-control")) #Factorize design level
+
+
+LogORData$Study <- c(1:183)
+
+write_xlsx(LogORData,"C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Preprocessed/LogORData_main_0205_new.xlsx")
+
+#Transform to data format for multi-level meta-analysis
+NonCTData <- subset(LogORData, is.na(LogORData$CTOR)==TRUE)
+
+CTData <- subset(LogORData, is.na(LogORData$CTOR)==FALSE)
+CTData$Level <- "CT"
+CTData[,c(90:92)] <- CTData[,c(33:35)]
+colnames(CTData)[90:92] <- c("LogOR", "LogOR_LCI", "LogOR_UCI")
+CTData$vi <- ((CTData$LogOR_UCI-CTData$LogOR_LCI)/(1.96*2))^2
+
+NonCTList <- rep(NonCTData,each=14)
+NonCTRes <- as.data.frame(matrix(rep(NA,88*26*14), nrow=26*14)) # 88: the numbers of columns before nonCTRes;26: the number of the nonCT' articles; 14: the numbers of subtypes of trauma.
+colnames(NonCTRes) <- colnames(NonCTData)
+
+i=1
+while (i<=88) {
+  a <- c(NonCTList[[1+14*(i-1)]], NonCTList[[2+14*(i-1)]], NonCTList[[3+14*(i-1)]], NonCTList[[4+14*(i-1)]], NonCTList[[5+14*(i-1)]], NonCTList[[6+14*(i-1)]], NonCTList[[7+14*(i-1)]], NonCTList[[8+14*(i-1)]], NonCTList[[9+14*(i-1)]], NonCTList[[10+14*(i-1)]], NonCTList[[11+14*(i-1)]], NonCTList[[12+14*(i-1)]], NonCTList[[13+14*(i-1)]], NonCTList[[14+14*(i-1)]])
+  NonCTRes[,i] <- a
+  i=i+1
+}
+
+NonCTLevel <- c("CT","PA","EA","EN","SA","PN","BL","PLD","PS","PD","AP","NL","AB","DM")
+NonCTRes$Level <- rep(NonCTLevel, each=26)
+NonCTRes$LogOR <- NA
+NonCTRes$LogOR_LCI <- NA
+NonCTRes$LogOR_UCI <- NA
+
+i=1
+while (i<=14) {
+  NonCTRes[c((1+26*(i-1)):(26+26*(i-1))),c(90:92)] <- NonCTRes[c((1+26*(i-1)):(26+26*(i-1))),c((33+3*(i-1)):(35+3*(i-1)))]
+  i=i+1
+}
+
+NonCTRes <- NonCTRes[complete.cases(NonCTRes[,c(90:92)]),]
+NonCTRes$LogOR_UCI <- as.numeric(NonCTRes$LogOR_UCI)
+NonCTRes$LogOR_LCI <- as.numeric(NonCTRes$LogOR_LCI)
+
+NonCTRes$vi <- ((NonCTRes$LogOR_UCI-NonCTRes$LogOR_LCI)/(1.96*2))^2
+
+replacements <- c("Cohort study", "Cross-sectional", "Case-control")
+
+# Replace values in MainData$Design
+NonCTRes$Design[NonCTRes$Design == 1] <- replacements[1]
+NonCTRes$Design[NonCTRes$Design == 2] <- replacements[2]
+NonCTRes$Design[NonCTRes$Design == 3] <- replacements[3]
+
+MainData <- rbind(CTData, NonCTRes)
+
+
+#MainData <- MainData %>%
+#  group_by(Study) %>%
+#  mutate(esid = row_number()) %>%
+#  ungroup()
+
+write_xlsx(MainData, "C:/Users/Lauren/Desktop/meta analysis/data analysis/output/MainData_0205.xlsx")
+```
+
+#-----Basic information-----#
+```{r}
+LogORData <- read_xlsx("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Preprocessed/LogORData_main_0205_new.xlsx")
+#LogORData <- subset(LogORData, LogORData$`only subgroup analysis (Y/N)`!="Y") #No subgroup analysis
+colnames(LogORData)[c(1,2,4,7,9,76)] <- c("Author", "Year", "Study", "Country", "Sample", "Design") #Simplify some colnames
+library(dplyr)
+LogORData <- subset(LogORData, LogORData$Author!= "Dennison et al.") #Exclude outliers
+LogORData <- subset(LogORData, !(Author == "Chen et al." & Year == "2022"))
+
+
+write.csv(LogORData,"C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Main analysis/logOR_main.csv")
+
+cat("The total sample size of main analysis is:",sum(LogORData$Sample), "\n")
+sample_range <- range(LogORData$Sample)
+cat("The range of sample size is:", sample_range, "\n")
+
+design_frequency <- table(LogORData$Design)
+
+# Print the frequency table
+print(design_frequency)
+
+LogORData$N_PT <- as.numeric(LogORData$N_PT)
+sum(LogORData$N_PT, na.rm = TRUE)
+sum(LogORData$N_Total_Male, na.rm = TRUE)
+sum(LogORData$N_Total_Female, na.rm = TRUE)
+
+result <- aggregate(Sample ~ Design, data = LogORData, sum,na.rm = TRUE)
+
+# Print the result
+print(result)
+
+sum(subset(LogORData$Sample, LogORData$Design=="Case-control"))
+sum(subset(LogORData$Sample, LogORData$Design=="Cross-sectional"))
+sum(subset(LogORData$Sample, LogORData$Design=="Cohort study"))
+sum(subset(LogORData$N_PT, LogORData$Design=="Case-control"))
+sum(subset(LogORData$N_HC, LogORData$Design=="Case-control"))
+
+
+#mean(LogORData$Age_Total_mean, na.rm=TRUE)
+
+
+
+
+
+```
+
+
+
+#---charateristics
+```{r}
+# Calculate the range with NA removal
+LogORData$Male_ratio1 <- (LogORData$N_Total_Male)/LogORData$Sample
+range_values <- range(LogORData$Male_ratio1, na.rm = TRUE)
+
+# Calculate the mean
+mean_value <- mean(LogORData$Male_ratio1, na.rm = TRUE)
+# Calculate the median
+median_value <- median(LogORData$Male_ratio1, na.rm = TRUE)
+# Calculate the lower and upper bounds of the IQR
+lower_bound <- quantile(LogORData$Male_ratio1, 0.25, na.rm = TRUE)
+upper_bound <- quantile(LogORData$Male_ratio1, 0.75, na.rm = TRUE)
+
+# Print the results
+cat("Meanfor male:", mean_value, "\n")
+cat("Range for male:", range_values[1], "to", range_values[2], "\n")
+cat("Median for male:", median_value, "\n")
+cat("IQR Range for male:", lower_bound, "to", upper_bound, "\n")
+
+# compute the female
+LogORData$Female_ratio <- (LogORData$N_Total_Female)/LogORData$Sample
+range_values <- range(LogORData$Female_ratio, na.rm = TRUE)
+mean_value <- mean(LogORData$Female_ratio, na.rm = TRUE)
+median_value <- median(LogORData$Female_ratio, na.rm = TRUE)
+lower_bound <- quantile(LogORData$Female_ratio, 0.25, na.rm = TRUE)
+upper_bound <- quantile(LogORData$Female_ratio, 0.75, na.rm = TRUE)
+
+# Print the results
+cat("Meanfor female:", mean_value, "\n")
+cat("Range for female:", range_values[1], "to", range_values[2], "\n")
+cat("Median for female:", median_value, "\n")
+cat("IQR Range for female:", lower_bound, "to", upper_bound, "\n")
+
+
+# age
+
+LogORData$Age_Total_mean <- as.numeric(LogORData$Age_Total_mean)
+range_values <- range(LogORData$Age_Total_mean, na.rm = TRUE)
+mean_value <- mean(LogORData$Age_Total_mean, na.rm = TRUE)
+median_value <- median(LogORData$Age_Total_mean, na.rm = TRUE)
+lower_bound <- quantile(LogORData$Age_Total_mean, 0.25, na.rm = TRUE)
+upper_bound <- quantile(LogORData$Age_Total_mean, 0.75, na.rm = TRUE)
+
+# Print the results
+cat("Meanfor avareage age:", mean_value, "\n")
+cat("Range for avareage age:", range_values[1], "to", range_values[2], "\n")
+cat("Median for avareage age:", median_value, "\n")
+cat("IQR Range for avareage age:", lower_bound, "to", upper_bound, "\n")
+
+# country info
+coninfo <- read_excel("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Preprocessed/LogORData_country_recoded.xlsx")
+cat("The total sample size of main analysis is:",sum(coninfo$Sample.Size_included..N..), "\n")
+coninfo <- coninfo[coninfo$only_subgroup_analysis == "N",]
+# Assuming 'coninfo' is your dataframe
+country_counts <- table(coninfo$country_recoded)
+country_percentages <- prop.table(country_counts) * 100
+
+# Combine counts and percentages into a data frame
+result_country <- data.frame(
+  Country = names(country_counts),
+  Count = as.numeric(country_counts),
+  Percentage = as.numeric(country_percentages)
+)
+
+# Display the result
+print(result_country)
+
+
+```
+
+#---RVE
+```{r}
+# Read Data
+MainData <- read_xlsx("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/MainData_0205.xlsx")
+
+MainData$LogOR <- as.numeric(MainData$LogOR)
+# Calculate effect sizes and sampling variance
+MainData <- escalc(measure="OR", yi=as.numeric(LogOR), vi=vi, 
+                   data=MainData, slab=paste("Study", Study))
+
+#Factorize trauma type and design information
+MainData$Level <- factor(MainData$Level, 
+                         levels = c("CT","PA","EA","EN","SA","PN","BL",
+                                    "PLD","PS","PD","AP","NL","AB","DM"))
+MainData$Design <- factor(MainData$Design, levels = c("Cohort study", "Cross-sectional","Case-control"))
+
+
+# Assuming rho.sens is a sequence of rho values
+
+rho.sens <- seq(0, 0.7, 0.1) # determine a set of rhos
+
+
+model.sens <- lapply(rho.sens, 
+                     function(x) 
+                       {V <- vcalc(vi, cluster=Study, obs=Level, 
+                                   data=MainData, rho = x)
+                        res.rho <- rma.mv(yi=LogOR, V, 
+                                          data=MainData, 
+                                          random = ~ 1 |Design/Study/Level,
+                                          slab=paste(Author, Year, sep=", "))}) 
+
+
+# Prediction intervals
+Pred_int <- function(mod, lvl){
+  SE <- mod$se
+  tau2 <- mod$sigma2[lvl]
+  df <- mod$k - mod$p
+  result <- c(LCI=exp(mod$b - qt(0.975, df-2)*sqrt(SE^2+tau2)),
+              UCI=exp(mod$b + qt(0.975, df-2)*sqrt(SE^2+tau2)))
+  result
+}
+
+df_PI <- t(vapply(model.sens, function(mod) Pred_int(mod,2), numeric(2)))
+
+# Heterogeneity
+I2 <- function(res.rho){
+  W <- diag(1/res.rho$vi)
+  X <- model.matrix(res.rho)
+  P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+
+  100*res.rho$sigma2/(sum(res.rho$sigma2)+(res.rho$k-res.rho$p)/sum(diag(P)))
+}
+
+pooled.sens <- vapply(model.sens, function(mod) exp(mod$b), numeric(1))
+CIs.sens <- vapply(model.sens, function(mod) c(exp(mod$ci.lb),exp(mod$ci.ub)), numeric(2))
+
+I2.sens <- vapply(model.sens, function(mod) I2(mod)[2], numeric(1))
+Qvalue.sens <- vapply(model.sens, function(mod) mod$QE, numeric(1))
+
+# Result_overall
+result_overall <- data.frame(rho.sens, pooled.sens, df_PI, I2.sens, Qvalue.sens)
+
+
+## plot pooled effect sizes and corresponding PIs (use jpeg() and dev.off to save it)
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Main Analysis/roh_main.jpg", width = 3000, height = 2000,res = 350)
+
+ggplot(result_overall,
+       aes(x = rho.sens,
+           y = pooled.sens)) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(mapping = aes(ymax = CIs.sens[2, ], ymin = CIs.sens[1, ]), width = 0.02, color = "blue") +
+  geom_errorbar(mapping = aes(ymax=UCI, ymin=LCI), width = 0.02, color = "green") +
+  geom_hline(yintercept = 1, color = "red", linetype = "dashed") +
+  ylim(c(0, 10)) +
+  scale_y_continuous(breaks = seq(0, 10, 1)) +
+  scale_x_continuous(breaks = seq(0, 0.95, 0.05)) +
+  labs(x = "Rho", y = "Pooled Odds Ratios", color = "Error Bars")+
+  scale_color_manual(values = c("CI" = "blue", "PI" = "green"),
+                     labels = c("95% Confidence Intervals", "95% Prediction Intervals"),
+                     name = "Intervals") + # Provide a name for the legend
+  theme(legend.position = "bottom") + # Move legend to the bottom
+  guides(color = guide_legend(override.aes = list(linetype = c("solid", "dashed")))) # Adjust linetype in legend
+
+dev.off()
+
+## plot I2 and Qvalue
+ggplot(result_overall,
+       aes(x=rho.sens,
+           y=I2.sens))+
+  geom_point()+
+  geom_line()+
+  ylim(c(20,100))+
+  scale_x_continuous(breaks = seq(0, 0.95, 0.05))+
+  labs(x="rho", y="I^2 values")
+
+ggplot(result_overall,
+       aes(x=rho.sens,
+           y=Qvalue.sens))+
+  geom_point()+
+  geom_line()+
+  scale_x_continuous(breaks = seq(0, 0.95, 0.05))+
+  labs(x="rho", y="Q values")
+
+# 3 Designs
+#MainData <- read_xlsx("./Data/Preprocessed/Main+Sub/Main Analysis/MainData.xlsx")
+
+Design_vec <- c("Case-control","Cross-sectional","Cohort study")
+MainData_list <- lapply(Design_vec, function(x) 
+                        escalc(measure="OR", yi=LogOR, vi=vi, 
+                               data=subset(MainData, Design==x), 
+                               slab=paste("Study", Study)))
+names(MainData_list) <- Design_vec
+design.sens <- lapply(1:3,
+                      function(x) lapply(rho.sens, function(y) {
+                        design <- parse(text=x)
+                        V <- vcalc(vi, cluster=Study, obs=Level, 
+                                             data=MainData_list[[x]], rho = y)
+                        res.rho <- rma.mv(yi=LogOR, V, 
+                                          data=MainData_list[[x]], 
+                                          random = ~ 1 |Study/Level,
+                                          slab=paste(Author, Year, sep=", "))
+                      }))
+
+
+pooled.design <- lapply(1:3,
+                        function(x) vapply(design.sens[[x]], 
+                                         function(mod) exp(mod$b), numeric(1)))
+design_PI <- lapply(1:3,
+                    function(x) 
+                      t(vapply(design.sens[[x]], 
+                             function(mod) Pred_int(mod,1), numeric(2))))
+
+I2.design <- lapply(1:3,
+                    function(x) 
+                      vapply(design.sens[[x]], 
+                             function(mod) I2(mod)[1], numeric(1)))
+
+Qvalue.design <- lapply(1:3,
+                        function(x)
+                          vapply(design.sens[[x]], function(mod) mod$QE, numeric(1)))
+
+result_designs <- bind_rows(lapply(1:3, function(x) 
+                                        data.frame(rho.sens, 
+                                                   b=pooled.design[[x]],
+                                                   design_PI[[x]], 
+                                                   I2=I2.design[[x]],
+                                                   Qvalue=Qvalue.design[[x]], 
+                                                   Design=Design_vec[x])))
+
+## plot pooled effect sizes
+ggplot(result_designs,
+       aes(x=rho.sens,
+           y=b))+
+  geom_point()+
+  geom_line()+
+  geom_errorbar(mapping=aes(ymin=LCI, ymax=UCI))+
+  facet_wrap(~Design)+
+  geom_hline(yintercept=1, color="red", linetype="dashed")+
+  ylim(c(0,10))+
+  scale_y_continuous(breaks = seq(0,10,1))+
+  scale_x_continuous(breaks = seq(0, 0.95, 0.05))+
+  labs(x="rho", y="Estimated pooled effect sizes and PIs")
+
+## I^2 and Qvalues
+ggplot(result_designs,
+       aes(x=rho.sens,
+           y=I2))+
+  geom_point()+
+  geom_line()+
+  facet_wrap(~Design)+
+  ylim(c(40,100))+
+  scale_x_continuous(breaks = seq(0, 0.95, 0.05))+
+  labs(x="rho", y="I^2 values")
+
+ggplot(result_designs,
+       aes(x=rho.sens,
+           y=Qvalue))+
+  geom_point()+
+  geom_line()+
+  facet_wrap(~Design)+
+  scale_x_continuous(breaks = seq(0, 0.95, 0.05))+
+  labs(x="rho", y="Q values")
+```
+
+
+#-----Model Summary-----#
+```{r}
+
+library(readxl)
+library(writexl)
+MainData <- read_excel("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/MainData_0205.xlsx")
+#MainData <- read_xlsx("./Data/Preprocessed/Main+Sub/Main Analysis/MainData.xlsx")
+MainData <- subset(MainData, MainData$Author!= "Dennison et al.") #Exclude outliers
+MainData <- subset(MainData, !(Author == "Chen et al." & Year == "2022"))
+
+MainData$Design <- factor(MainData$Design, levels = c("Cohort study", "Cross-sectional","Case-control")) 
+
+
+
+#desired_order <- c("Case-control", "Cross-sectional", "Cohort study")
+#MainData$Design <- factor(MainData$Design, levels = desired_order, ordered = TRUE)
+# Sort the data frame by 'Year' and 'First_author'
+MainData <- MainData %>% arrange(Design,Year,Author)
+
+MainData <- escalc(measure="OR", yi=as.numeric(LogOR), vi=vi, data=MainData, slab=paste("Study", Study))
+
+MainData$Level <- factor(MainData$Level, levels = c("CT","PA","EA","EN","SA","PN","BL","PLD","PS","PD","AP","NL","AB","DM"))
+
+
+
+### fit random-effects model
+MainData$LogOR <- as.numeric(MainData$LogOR)
+MainData$vi <- as.numeric(MainData$vi)
+
+res <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+summary(res)
+
+#Compare the model with and without design level
+res.added <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+res.removed <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "), sigma2 =  c(0, NA, NA))
+summary(res.added)
+summary(res.removed)
+
+mod.Compare <- anova(res.added, res.removed)
+
+#Aggregate studies to the study level
+agg <- rma.mv(yi=LogOR, V=vcov(res, type="obs"), mods = ~ 0 + factor(Study), data=MainData, slab=paste(Author, Year, sep=", "))
+LogORData$yi <- coef(agg)
+
+
+res.agg <- rma.mv(yi, V=vcov(agg), method="EE", data = LogORData, slab=paste(Author, Year, sep=", "))
+
+
+
+summary(res.agg)
+
+
+#Estimate the pooled-es for three designs
+res.cc <- rma.mv(yi=LogOR, vi, subset=(Design=="Case-control"), data=MainData, random = ~ 1 |Study/Level)
+res.ch <- rma.mv(yi=LogOR, vi, subset=(Design=="Cohort study"), data=MainData, random = ~ 1 |Study/Level)
+res.cs <- rma.mv(yi=LogOR, vi, subset=(Design=="Cross-sectional"), data=MainData, random = ~ 1 |Study/Level)
+summary(res.cc)
+summary(res.ch)
+summary(res.cs)
+
+
+```
+
+#----Forest plot---
+```{r}
+### get the number of each type of studies
+csNum <- nrow(subset(LogORData,LogORData$Design=="Cross-sectional"))
+ccNum <- nrow(subset(LogORData,LogORData$Design=="Case-control"))
+cohortNum <- nrow(subset(LogORData, LogORData$Design=="Cohort study"))
+
+### a little helper function to add Q-test, I^2, and tau^2 estimate info
+mlabfun <- function(text, res, levels) {
+   W <- diag(1/res$vi)
+   X <- model.matrix(res)
+   P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+   I2 <- 100 * res$sigma2[levels-1] / (sum(res$sigma2) + (res$k-res$p)/sum(diag(P)))
+  
+   list(bquote(paste(.(text),
+      " (Q = ", .(formatC(res$QE, digits=2, format="f")),
+      ", df = ", .(res$k - res$p),
+      ", p ", .(metafor:::.pval(res$QEp, digits=3, showeq=TRUE, sep=" ")), "; ",
+      I^2, " = ", .(formatC(I2, digits=1, format="f")), "%, ",
+      tau^2, " = ", .(formatC(res$sigma2[levels-1], digits=2, format="f")), ")")))}
+
+
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Forestplot_OR_0318.1.jpg", width =3000, heigh = 10000, res=300)
+forest(res.agg, at=log(c(0.25, 1, 4, 40)), xlim=c(-11,8), level=95, atransf = exp,
+       ilab=cbind(Country, Sample), ilab.xpos=c(-5.5, -3.5),
+       cex=0.7, efac=c(0.4,0.4),ylim=c(-1, cohortNum+csNum+ccNum+14), 
+       order= Design, 
+       rows=c(3:(cohortNum+2), (cohortNum+7):(cohortNum+csNum+6), (cohortNum+csNum+11):(cohortNum+csNum+ccNum+10)),
+       header=c("Author,Year","Odds Ratio [95% CI]"), xlab="Odds Ratio (Log scale)", mlab = mlabfun("Multilevel Model for All Studies", res, 3))
+
+   
+
+### set font expansion factor (as in forest() above) and use a bold font
+op <- par(cex=0.75, font=2)
+text(c(-5.5, -3.5), cohortNum+csNum+ccNum+13,c("Country", "Sample size"))
+
+
+### switch to bold italic font
+par(font=4)
+ 
+### add text for the subgroups
+text(-11, c(cohortNum+csNum+ccNum+11,cohortNum+csNum+7,cohortNum+3), pos=4, 
+     c("Case-control Studies", "Cross-sectional Studies", "Cohort Studies"))
+ 
+### set par back to the original settings
+par(op)
+ 
+### add summary polygons for the three subgroups
+addpoly(res.cc, row=cohortNum+csNum+9.5, mlab=mlabfun("Multilevel Model for subgroup", res.cc, 2))
+addpoly(res.cs, row=cohortNum+5.5, mlab=mlabfun("Multilevel Model for subgroup", res.cs, 2))
+addpoly(res.ch, row= 1.5, mlab=mlabfun("Multilevel Model for subgroup", res.ch, 2))
+ 
+### fit meta-regression model to test for subgroup differences
+#res <- rma(yi, vi, mods = ~ alloc, data=dat)
+ 
+### add text for the test of subgroup differences
+#text(-16, -1.8, pos=4, cex=0.75, bquote(paste("Test for Subgroup Differences: ",
+     #Q[M], " = ", .(formatC(res$QM, digits=2, format="f")), ", df = ", .(res$p - 1),
+     #", p = ", .(formatC(res$QMp, digits=2, format="f")))))
+
+abline(v = 1.0302, col = "red") # v = effect size
+
+dev.off
+
+
+
+```
+#---Forest plot by pdf---
+
+```{r}
+pdf("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Forestplot_OR_0315.pdf", width =10, heigh = 33)
+forest(res.agg, at=log(c(0.25, 1, 4, 40)), xlim=c(-11,8), level=95, atransf = exp,
+       ilab=cbind(Country, Sample), ilab.xpos=c(-5.5, -3.5),
+       cex=0.7, efac=c(0.4,0.4),ylim=c(-1, cohortNum+csNum+ccNum+14), 
+       order= Design, 
+       rows=c(3:(cohortNum+2), (cohortNum+7):(cohortNum+csNum+6), (cohortNum+csNum+11):(cohortNum+csNum+ccNum+10)),
+       header=c("Author,Year","Odds Ratio [95% CI]"), xlab="Odds Ratio (Log scale)", mlab = mlabfun("Multilevel Model for All Studies", res, 3))
+
+   
+
+### set font expansion factor (as in forest() above) and use a bold font
+op <- par(cex=0.75, font=2)
+text(c(-5.5, -3.5), cohortNum+csNum+ccNum+13,c("Country", "Sample size"))
+
+
+### switch to bold italic font
+par(font=4)
+ 
+### add text for the subgroups
+text(-11, c(cohortNum+csNum+ccNum+11,cohortNum+csNum+7,cohortNum+3), pos=4, 
+     c("Case-control Studies", "Cross-sectional Studies", "Cohort Studies"))
+ 
+### set par back to the original settings
+par(op)
+ 
+### add summary polygons for the three subgroups
+addpoly(res.cc, row=cohortNum+csNum+9.5, mlab=mlabfun("Multilevel Model for subgroup", res.cc, 2))
+addpoly(res.cs, row=cohortNum+5.5, mlab=mlabfun("Multilevel Model for subgroup", res.cs, 2))
+addpoly(res.ch, row= 1.5, mlab=mlabfun("Multilevel Model for subgroup", res.ch, 2))
+ 
+### fit meta-regression model to test for subgroup differences
+#res <- rma(yi, vi, mods = ~ alloc, data=dat)
+ 
+### add text for the test of subgroup differences
+#text(-16, -1.8, pos=4, cex=0.75, bquote(paste("Test for Subgroup Differences: ",
+     #Q[M], " = ", .(formatC(res$QM, digits=2, format="f")), ", df = ", .(res$p - 1),
+     #", p = ", .(formatC(res$QMp, digits=2, format="f")))))
+
+abline(v = 1.032, col = "red")
+
+dev.off
+```
+
+#-----Prediction Interval
+```{r}
+pred_interval_all <- numeric(length = 1)  # For a numeric vector
+pred_interval_all[1] <- exp(res$b-qt(p=.05/2, df=182, lower.tail=FALSE)*sqrt((res$se)^2+res$sigma2[2]))
+pred_interval_all[2] <- exp(res$b+qt(p=.05/2, df=182, lower.tail=FALSE)*sqrt((res$se)^2+res$sigma2[2]))
+
+# Assuming 'res.cc', 'res.cs', and 'res.ch' are your random-effects models
+# Function to compute prediction interval based on the provided formula
+compute_prediction_interval <- function(res, df, alpha = 0.05) {
+  lower_bound <- exp(res$b - qt(p = alpha / 2, df = df-1, lower.tail = FALSE) * sqrt((res$se)^2 + res$sigma2[1]))
+  upper_bound <- exp(res$b + qt(p = alpha / 2, df = df-1, lower.tail = FALSE) * sqrt((res$se)^2 + res$sigma2[1]))
+  return(c(lower_bound, upper_bound))
+}
+
+
+# Case-control study
+pred_interval_cc <- compute_prediction_interval(res.cc, df = 119)
+# Cross-sectional study
+pred_interval_cs <- compute_prediction_interval(res.cs, df = 51)  
+# Cohort study
+pred_interval_ch <- compute_prediction_interval(res.ch, df = 13)  
+
+result_prediction_interval <- data.frame(
+  Study_Type = c("Overall","Case-Control", "Cross-Sectional", "Cohort"),
+  Lower_Bound = c(pred_interval_all[1], pred_interval_cc[1], pred_interval_cs[1], pred_interval_ch[1]),
+  Upper_Bound = c(pred_interval_all[2],pred_interval_cc[2], pred_interval_cs[2], pred_interval_ch[2])
+)
+
+# Print the result table
+print(result_prediction_interval)
+
+
+```
+
+
+
+
+#-----Meta regression-----#
+```{r}
+library(metafor)
+library(readxl)
+library(writexl)
+
+#MainData <- read_xlsx("./Data/Preprocessed/Main+Sub/Main Analysis/MainData.xlsx")
+#colnames(MainData)[9] <- "Sample"
+
+MainData$Design <- factor(MainData$Design, levels = c("Cohort study", "Cross-sectional", "Case-control"))
+
+
+#Sample size
+reg.Sample <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, mods = ~Sample)
+summary(reg.Sample)
+
+# quality
+reg.QA <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, mods = ~QA_scores)
+summary(reg.QA)
+
+#Gender ratio
+MainData$Male_ratio <- as.numeric(MainData$Male_ratio)
+reg.Gender <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, mods = ~Male_ratio)
+summary(reg.Gender)
+
+# Publication year
+MainData$Year_z <- scale(MainData$Year)
+reg.Year <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, mods = ~Year_z)
+summary(reg.Year)
+
+
+#Diagnostic vs. Dimensional
+colnames(MainData)[28] <- "Measure"
+reg.Measure <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, mods = ~factor(Measure))
+summary(reg.Measure)
+
+#Age_level
+
+reg.Measure <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, mods = ~factor(Age_level))
+summary(reg.Measure)
+
+#Exposure number vs. Mean/sd
+
+reg.EM <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, mods = ~factor(compution_effect_size))
+summary(reg.EM)
+
+# country level
+
+reg.country <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, mods = ~factor(Country_level))
+summary(reg.country)
+
+# questionnaire
+reg.Q_or_Int <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, mods = ~factor(Q_or_Int))
+summary(reg.Q_or_Int)
+
+# Adjust or unadjust
+reg.Adj <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, mods = ~factor(Adj))
+summary(reg.Adj)
+
+# CT vs without CT
+reg.CT <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, mods = ~factor(with.total.trauma.info..Y.N.))
+summary(reg.CT)
+
+# study design
+reg.design <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Study/Level, mods = ~factor(Design))
+summary(reg.design)
+
+```
+#---Multiple Meta-Regression
+```{r}
+# Create a list of variable names
+variable_names <- c("Measure", "Age_level", "compution_effect_size", "Country_level", "Q_or_Int", "Adj", "with.total.trauma.info..Y.N.")
+
+# Create a list of factors
+factors_list <- lapply(variable_names, function(var_name) {
+  MainData[[var_name]] <- factor(MainData[[var_name]])
+  return(MainData[[var_name]])
+})
+
+# If you want to see the first few rows of each factor variable:
+head(factors_list)
+
+reg.ALL <- rma.mv(LogOR ~ Sample + QA_scores  + Measure + Age_level + compution_effect_size + Q_or_Int + Adj + with.total.trauma.info..Y.N., V = vi, data=MainData, random = ~ 1 |Design/Study/Level)
+summary(reg.ALL)
+
+robust(reg.ALL, cluster=MainData$Study)
+
+# do RVE in clubSandwich (recommended by Wolfgang's workflow)
+conf_int(reg.ALL, vcov="CR2") # with CIs of betas
+coef_test(reg.ALL, vcov="CR2") # with p values of betas
+
+```
+
+
+
+```{r}
+#Trauma Types ~ Gender ratio
+SubData <- read_xlsx("./Data/Preprocessed/Main+Sub/LogORData.xlsx")
+colnames(SubData)[c(1,2,3,76)] <- c("Author", "Year", "Study","Design")
+SubData <- subset(SubData, SubData$Author!= "Dennison et al." & SubData$Author!= "Chen et al.") #Exclude outliers
+SubData$Gender <- SubData$N_Total_Male/(SubData$N_Total_Female+SubData$N_Total_Male)
+SubData <- subset(SubData, is.na(SubData$Gender)==FALSE)
+
+Sublist <- list()
+
+names <- c("PA","EA","EN","SA","PN","BL","PLD","PS","PD","AP","NL","AB","DM")
+
+i=1
+while (i<=13) {
+  Sublist[[i]] <- list()
+  df <- SubData[,c(1:32,(36+3*(i-1)):(38+3*(i-1)),75:78)]
+  df <- df[complete.cases(df[,33:35]),]
+  df[,40] <- ((df[,35]-df[,34])/(1.96*2))^2
+  df$Trauma <- rep(names[i],nrow(df))
+  colnames(df)[c(33:35,40)] <- c("LogOR","LogOR_LCI","LogOR_UCI","vi")
+  Sublist[[i]] <- df
+  i=i+1
+}
+
+names(Sublist) <- names
+Sublist <- Sublist[-c(9,10,13)]
+
+GenderRes <- list()
+i=1
+while (i<=10) {
+  GenderRes[[i]] <- rma(yi=LogOR, vi=vi, data=Sublist[[i]], mods = ~Gender)
+  i=i+1
+}
+summary(GenderRes[[10]])
+```
+
+#--Subgroup Analysis: Number and Mean SD---#
+```{r}
+library(metafor)
+library(readxl)
+library(writexl)
+
+MainData <- read_xlsx("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/MainData_0205.xlsx")
+MainData <- escalc(measure="OR", yi= as.numeric(LogOR), vi=vi, data=MainData, slab=paste("Study", Study))
+MainData$Level <- factor(MainData$Level, levels = c("CT","PA","EA","EN","SA","PN","BL","PLD","PS","PD","AP","NL","AB","DM"))
+MainData$Design <- factor(MainData$Design, levels = c("Cohort study", "Cross-sectional", "Case-control"))
+#MainData$EM <- rep(NA, 250)
+MainData$LogOR <- as.numeric(MainData$LogOR)
+MainData$vi <- as.numeric(MainData$vi)
+
+#--number
+MainData_OR <- subset(MainData, MainData$compution_effect_size=="OR")
+res_OR <- rma.mv(yi=LogOR, vi, data=MainData_OR, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+
+cat("The OR of number is",res_OR$k, exp(res_OR$beta), "[", exp(res_OR$ci.lb), ",", exp(res_OR$ci.ub), "]\n")
+
+#--mean and sd
+MainData_MD <- subset(MainData, MainData$compution_effect_size=="Mean_SD")
+res_MD <- rma.mv(yi=LogOR, vi, data=MainData_MD, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+cat("The OR of mean sd is",res_MD$k, exp(res_MD$beta), "[", exp(res_MD$ci.lb), ",", exp(res_MD$ci.ub), "]\n")
+
+
+### get the number of each type of studies
+csNum <- nrow(subset(LogORData, LogORData$Design=="Cross-sectional"))
+ccNum <- nrow(subset(LogORData, LogORData$Design=="Case-control"))
+cohortNum <- nrow(subset(LogORData, LogORData$Design=="Cohort study"))
+
+#Between-study heterogeneity-I square
+W <- diag(1/res$vi)
+X <- model.matrix(res)
+P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+100 * res$sigma2[2] / (sum(res$sigma2) + (res$k-res$p)/sum(diag(P)))
+
+#I square within each design
+W <- diag(1/res.cc$vi)
+X <- model.matrix(res.cc)
+P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+100 * res.cc$sigma2[1] / (sum(res.cc$sigma2) + (res.cc$k-res.cc$p)/sum(diag(P)))
+
+W <- diag(1/res.ch$vi)
+X <- model.matrix(res.ch)
+P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+100 * res.ch$sigma2[1] / (sum(res.ch$sigma2) + (res.ch$k-res.ch$p)/sum(diag(P)))
+
+W <- diag(1/res.cs$vi)
+X <- model.matrix(res.cs)
+P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+100 * res.cs$sigma2[1] / (sum(res.cs$sigma2) + (res.cs$k-res.cs$p)/sum(diag(P)))
+
+#Prediction Interval
+exp(res$b+qt(p=.05/2, df=159, lower.tail=FALSE)*sqrt(res$se+res$sigma2[2]))
+exp(res$b-qt(p=.05/2, df=159, lower.tail=FALSE)*sqrt(res$se+res$sigma2[2]))
+
+### a little helper function to add Q-test, I^2, and tau^2 estimate info
+mlabfun <- function(text, res, levels) {
+   W <- diag(1/res$vi)
+   X <- model.matrix(res)
+   P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+   I2 <- 100 * res$sigma2[levels-1] / (sum(res$sigma2) + (res$k-res$p)/sum(diag(P)))
+  
+   list(bquote(paste(.(text),
+      " (Q = ", .(formatC(res$QE, digits=2, format="f")),
+      ", df = ", .(res$k - res$p),
+      ", p ", .(metafor:::.pval(res$QEp, digits=3, showeq=TRUE, sep=" ")), "; ",
+      I^2, " = ", .(formatC(I2, digits=1, format="f")), "%, ",
+      tau^2, " = ", .(formatC(res$sigma2[levels-1], digits=2, format="f")), ")")))}
+
+### set up forest plot (with 2x2 table counts added; the 'rows' argument is
+### used to specify in which rows the outcomes will be plotted)
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output//ForestplotMain_Number.jpg", width =3000, heigh = 10000, res=300)
+forest(res.agg, at=log(c(0.25, 1, 4, 40)), xlim=c(-11,8), level=95, atransf = exp,
+       ilab=cbind(Country, Sample), ilab.xpos=c(-5.5, -3.5),
+       cex=0.7, efac=c(0.4,0.4),ylim=c(-1, cohortNum+csNum+ccNum+14), 
+       order=Design, 
+       rows=c(3:(cohortNum+2), (cohortNum+7):(cohortNum+csNum+6), (cohortNum+csNum+11):(cohortNum+csNum+ccNum+10)),
+       header=c("Author,Year","Odds Ratio [95% CI]"), xlab="Odds Ratio (Log scale)", mlab = mlabfun("Multilevel Model for All Studies", res, 3))
+
+### set font expansion factor (as in forest() above) and use a bold font
+op <- par(cex=0.75, font=2)
+text(c(-5.5, -3.5), cohortNum+csNum+ccNum+13, c("Country", "Sample size"))
+ 
+### switch to bold italic font
+par(font=4)
+ 
+### add text for the subgroups
+text(-11, c(cohortNum+csNum+ccNum+11,cohortNum+csNum+7,cohortNum+3), pos=4, 
+     c("Case-control Studies", "Cross-sectional Studies", "Cohort Studies"))
+ 
+### set par back to the original settings
+par(op)
+ 
+### add summary polygons for the three subgroups
+addpoly(res.cc, row=cohortNum+csNum+9.5, mlab=mlabfun("Multilevel Model for subgroup", res.cc, 2))
+addpoly(res.cs, row=cohortNum+5.5, mlab=mlabfun("Multilevel Model for subgroup", res.cs, 2))
+addpoly(res.ch, row= 1.5, mlab=mlabfun("Multilevel Model for subgroup", res.ch, 2))
+ 
+### fit meta-regression model to test for subgroup differences
+#res <- rma(yi, vi, mods = ~ alloc, data=dat)
+ 
+### add text for the test of subgroup differences
+#text(-16, -1.8, pos=4, cex=0.75, bquote(paste("Test for Subgroup Differences: ",
+     #Q[M], " = ", .(formatC(res$QM, digits=2, format="f")), ", df = ", .(res$p - 1),
+     #", p = ", .(formatC(res$QMp, digits=2, format="f")))))
+
+abline(v = 1.0018, col = "red")
+
+dev.off
+```
+#---subgroup analysis:CT without CT
+```{r}
+#--with total CT
+MainData <- read_xlsx("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/MainData_0208.xlsx")
+MainData <- escalc(measure="OR", yi=as.numeric(LogOR), vi=vi, data=MainData, slab=paste("Study", Study))
+MainData$Level <- factor(MainData$Level, levels = c("CT","PA","EA","EN","SA","PN","BL","PLD","PS","PD","AP","NL","AB","DM"))
+MainData$Design <- factor(MainData$Design, levels = c("Cohort study", "Cross-sectional", "Case-control"))
+#MainData$EM <- rep(NA, 250)
+MainData$LogOR <- as.numeric(MainData$LogOR)
+MainData$vi <- as.numeric(MainData$vi)
+
+MainData_CT <- subset(MainData, MainData$with.total.trauma.info..Y.N. == "Y")
+res_CT <- rma.mv(yi=LogOR, vi, data=MainData_CT, random = ~ 1 |Design/Study, slab=paste(Author, Year, sep=", "))
+
+cat("The OR of with CT is",res_CT$k, exp(res_CT$beta), "[", exp(res_CT$ci.lb), ",", exp(res_CT$ci.ub), "]\n")
+
+#--witH singel trauma
+MainData_NOCT <- subset(MainData, MainData$with.total.trauma.info..Y.N. == "N")
+res_NOCT <- rma.mv(yi=LogOR, vi, data=MainData_NOCT, random = ~ 1 |Design/Study, slab=paste(Author, Year, sep=", "))
+
+cat("The OR of with singal trauma is",res_NOCT$k, exp(res_NOCT$beta), "[", exp(res_NOCT$ci.lb), ",", exp(res_NOCT$ci.ub), "]\n")
+
+#--with mutiple trauma
+MainData_MCT <- subset(MainData, MainData$with.total.trauma.info..Y.N. == "B")
+res_MCT <- rma.mv(yi=LogOR, vi, data=MainData_MCT, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+
+cat("The OR of with mutiple trauma is",res_MCT$k, exp(res_MCT$beta), "[", exp(res_MCT$ci.lb), ",", exp(res_MCT$ci.ub), "]\n")
+
+
+# meta-regression
+MainData$with_CT <- as.factor(MainData$with.total.trauma.info..Y.N.)
+reg.CT <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, mods = ~with_CT)
+summary(reg.CT)
+
+```
+
+#--Subgroup analysis: interview or questionnaire
+
+```{r}
+#   Questionnaire
+MainData_QA <- subset(MainData, MainData$Q_or_Int == 1)
+res_QA <- rma.mv(yi=LogOR, vi, data=MainData_QA, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+cat("The OR of questionnaire is",res_QA$k, exp(res_QA$beta), "[", exp(res_QA$ci.lb), ",", exp(res_QA$ci.ub), "]\n")
+
+# Interviews
+MainData_int <- subset(MainData, MainData$Q_or_Int == 2)
+res_int <- rma.mv(yi=LogOR, vi, data=MainData_int, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+
+cat("The OR of interviews is",res_int$k, exp(res_int$beta), "[", exp(res_int$ci.lb), ",", exp(res_int$ci.ub), "]\n")
+
+# self made tools
+MainData_st <- subset(MainData, MainData$Q_or_Int == 3)
+res_st <- rma.mv(yi=LogOR, vi, data=MainData_st, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+
+cat("The OR of self made tools is",res_st$k, exp(res_st$beta), "[", exp(res_st$ci.lb), ",", exp(res_st$ci.ub), "]\n")
+```
+# --- subgroup: dimension or diagnostic
+```{r}
+# unadjusted ORs
+MainData_di <- subset(MainData, MainData$Dimensional..Diagnostic.Outcome == "Dimensional")
+res_di <- rma.mv(yi=LogOR, vi, data=MainData_di, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+cat("The OR of dimensional is",res_di$k, exp(res_di$beta), "[", exp(res_di$ci.lb), ",", exp(res_di$ci.ub), "]\n")
+
+# Adjusted ORs
+MainData_dg <- subset(MainData, MainData$Dimensional..Diagnostic.Outcome == "Diagnostic")
+res_dg <- rma.mv(yi=LogOR, vi, data=MainData_dg, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+
+cat("The OR of Diagnostic is",res_dg$k, exp(res_dg$beta), "[", exp(res_dg$ci.lb), ",", exp(res_dg$ci.ub), "]\n")
+```
+#--Subgroup analysis: age 18 vs < 18--
+```{r}
+# unadjusted ORs
+MainData_youth <- subset(MainData, MainData$Age_level == 2)
+res_youth <- rma.mv(yi=LogOR, vi, data=MainData_youth, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+cat("The OR of unadjusted is",res_youth$k, exp(res_youth$beta), "[", exp(res_youth$ci.lb), ",", exp(res_youth$ci.ub), "]\n")
+
+# Adjusted ORs
+MainData_adult <- subset(MainData, MainData$Age_level == 1)
+res_adult <- rma.mv(yi=LogOR, vi, data=MainData_adult, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+
+cat("The OR of adjusted is",res_adult$k, exp(res_adult$beta), "[", exp(res_adult$ci.lb), ",", exp(res_adult$ci.ub), "]\n")
+```
+
+
+
+#--Subgroup analysis: Un-adjusted vs adjusted--
+```{r}
+# unadjusted ORs
+MainData_unadj <- subset(MainData, MainData$Adj == "Unadjusted")
+res_unadj <- rma.mv(yi=LogOR, vi, data=MainData_unadj, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+cat("The OR of unadjusted is",res_unadj$k, exp(res_unadj$beta), "[", exp(res_unadj$ci.lb), ",", exp(res_unadj$ci.ub), "]\n")
+
+# Adjusted ORs
+MainData_adj <- subset(MainData, MainData$Adj == "Adjusted")
+res_adj <- rma.mv(yi=LogOR, vi, data=MainData_adj, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+
+cat("The OR of adjusted is",res_adj$k, exp(res_adj$beta), "[", exp(res_adj$ci.lb), ",", exp(res_adj$ci.ub), "]\n")
+```
+
+
+
+#---sensitivity analysis-exclude poor quality
+```{r}
+MainData <- read_excel("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/MainData_0205.xlsx")
+
+#MainData <- read_xlsx("./Data/Preprocessed/Main+Sub/Main Analysis/MainData.xlsx")
+MainData <- subset(MainData, MainData$Author!= "Dennison et al.") #Exclude outliers
+MainData <- subset(MainData, !(Author == "Chen et al." & Year == "2022"))
+
+selected_rows <- MainData[MainData$QA_Rating == "Poor", ]
+
+MainData_no_poor <- MainData[MainData$QA_Rating != "Poor", ]
+
+### fit random-effects model
+MainData_no_poor$LogOR <- as.numeric(MainData_no_poor$LogOR)
+MainData_no_poor$vi <- as.numeric(MainData_no_poor$vi)
+
+res.poor <- rma.mv(yi=LogOR, vi, data=MainData_no_poor, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+summary(res.poor)
+
+cat("The OR after excluding four poor quality articles", exp(res.poor$beta),"95$ CI", exp(res.poor$ci.lb),"to",exp(res.poor$ci.ub))
+
+
+#Aggregate studies to the study level
+agg <- rma.mv(yi=LogOR, V=vcov(res, type="obs"), mods = ~ 0 + factor(Study), data=MainData_no_poor, slab=paste(Author, Year, sep=", "))
+LogORData_no_poor$yi <- coef(agg)
+res.agg <- rma.mv(yi, V=vcov(agg), method="EE", data = LogORData_no_poor, slab=paste(Author, Year, sep=", "))
+summary(res.agg)
+
+
+# sorted by year and author
+res.agg$data$Year <- as.numeric(res.agg$data$Year)
+res.agg$data <- res.agg$data %>% arrange(desc(Year))
+
+
+#Estimate the pooled-es for three designs
+res.cc <- rma.mv(yi=LogOR, vi, subset=(Design=="Case-control"), data=MainData_no_poor, random = ~ 1 |Study/Level)
+res.ch <- rma.mv(yi=LogOR, vi, subset=(Design=="Cohort study"), data=MainData_no_poor, random = ~ 1 |Study/Level)
+res.cs <- rma.mv(yi=LogOR, vi, subset=(Design=="Cross-sectional"), data=MainData_no_poor, random = ~ 1 |Study/Level)
+summary(res.cc)
+summary(res.ch)
+summary(res.cs)
+
+### get the number of each type of studies
+csNum <- nrow(subset(LogORData_no_poor,LogORData_no_poor$Design=="Cross-sectional"))
+ccNum <- nrow(subset(LogORData_no_poor,LogORData_no_poor$Design=="Case-control"))
+cohortNum <- nrow(subset(LogORData_no_poor, LogORData_no_poor$Design=="Cohort study"))
+
+#Between-study heterogeneity-I square
+W <- diag(1/res$vi)
+X <- model.matrix(res)
+P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+100 * res$sigma2[2] / (sum(res$sigma2) + (res$k-res$p)/sum(diag(P)))
+
+# prediction interval
+pred_interval_all <- numeric(length = 1)  # For a numeric vector
+pred_interval_all[1] <- exp(res$b-qt(p=.05/2, df=178, lower.tail=FALSE)*sqrt(res$se+res$sigma2[2]))
+pred_interval_all[2] <- exp(res$b+qt(p=.05/2, df=178, lower.tail=FALSE)*sqrt(res$se+res$sigma2[2]))
+
+# Assuming 'res.cc', 'res.cs', and 'res.ch' are your random-effects models
+# Function to compute prediction interval based on the provided formula
+compute_prediction_interval <- function(res, df, alpha = 0.05) {
+  lower_bound <- exp(res$b - qt(p = alpha / 2, df = df-1, lower.tail = FALSE) * sqrt(res$se + res$sigma2[1]))
+  upper_bound <- exp(res$b + qt(p = alpha / 2, df = df-1, lower.tail = FALSE) * sqrt(res$se + res$sigma2[1]))
+  return(c(lower_bound, upper_bound))
+}
+
+
+# Case-control study
+pred_interval_cc <- compute_prediction_interval(res.cc, df = 115) # four studies are case-control
+# Cross-sectional study
+pred_interval_cs <- compute_prediction_interval(res.cs, df = 51)  
+# Cohort study
+pred_interval_ch <- compute_prediction_interval(res.ch, df = 13)  
+
+result_prediction_interval <- data.frame(
+  Study_Type = c("Overall","Case-Control", "Cross-Sectional", "Cohort"),
+  Lower_Bound = c(pred_interval_all[1], pred_interval_cc[1], pred_interval_cs[1], pred_interval_ch[1]),
+  Upper_Bound = c(pred_interval_all[2],pred_interval_cc[2], pred_interval_cs[2], pred_interval_ch[2])
+)
+
+# Print the result table
+print(result_prediction_interval)
+
+### Plot forest plot
+mlabfun <- function(text, res, levels) {
+   W <- diag(1/res$vi)
+   X <- model.matrix(res)
+   P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+   I2 <- 100 * res$sigma2[levels-1] / (sum(res$sigma2) + (res$k-res$p)/sum(diag(P)))
+  
+   list(bquote(paste(.(text),
+      " (Q = ", .(formatC(res$QE, digits=2, format="f")),
+      ", df = ", .(res$k - res$p),
+      ", p ", .(metafor:::.pval(res$QEp, digits=3, showeq=TRUE, sep=" ")), "; ",
+      I^2, " = ", .(formatC(I2, digits=1, format="f")), "%, ",
+      tau^2, " = ", .(formatC(res$sigma2[levels-1], digits=2, format="f")), ")")))}
+
+### set up forest plot (with 2x2 table counts added; the 'rows' argument is
+### used to specify in which rows the outcomes will be plotted)
+
+
+res.agg$data$Year <- as.numeric(res.agg$data$Year)
+res.agg$data <- res.agg$data %>% arrange(desc(Year))
+
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/ForestplotMain_excludePoor_0207.jpg", width =3000, heigh = 10000, res=300)
+forest(res.agg, at=log(c(0.25, 1, 4, 40)), xlim=c(-11,8), level=95, atransf = exp,
+       ilab=cbind(Country, Sample), ilab.xpos=c(-5.5, -3.5),
+       cex=0.7, efac=c(0.4,0.4),ylim=c(-1, cohortNum+csNum+ccNum+14), 
+       order=Design, 
+       rows=c(3:(cohortNum+2), (cohortNum+7):(cohortNum+csNum+6), (cohortNum+csNum+11):(cohortNum+csNum+ccNum+10)),
+       header=c("Author, Year","Odds Ratio [95% CI]"), xlab="Odds Ratio (Log scale)", mlab = mlabfun("Multilevel Model for All Studies", res, 3))
+
+### set font expansion factor (as in forest() above) and use a bold font
+op <- par(cex=0.75, font=2)
+text(c(-5.5, -3.5), cohortNum+csNum+ccNum+13, c("Country", "Sample size"))
+ 
+### switch to bold italic font
+par(font=4)
+ 
+### add text for the subgroups
+text(-11, c(cohortNum+csNum+ccNum+11,cohortNum+csNum+7,cohortNum+3), pos=4, 
+     c("Case-control Studies", "Cross-sectional Studies", "Cohort Studies"))
+
+```
+
+#---leave1out
+```{r}
+MainData$LogOR <- as.numeric(MainData$LogOR)
+res <- rma.mv(yi=LogOR, vi, data=MainData, random = ~ 1 |Design/Study/Level, slab=paste(Author, Year, sep=", "))
+summary(res)
+
+
+# Function to perform leave-one-out analysis
+leave_one_out_analysis <- function(data, outcome, variance, study_id) {
+  study_ids <- unique(data[[study_id]])
+  num_studies <- length(study_ids)
+  
+  # Initialize matrices to store results
+  results <- matrix(NA, nrow = num_studies, ncol = 6, 
+                    dimnames = list(NULL, c("Study_ID", "Pooled_OR", "ci.lb", "ci_ub", "P_Value", "I Square")))
+  
+  for (i in 1:num_studies) {
+    # Subset the data to leave out the i-th study
+    subset_data <- data[data[[study_id]] != study_ids[i], ]
+    
+    # Fit the meta-analysis model without the i-th study
+    model <- rma.mv(yi = subset_data[[outcome]], V = subset_data[[variance]], 
+                    data = subset_data, random = ~ 1 | Design/Study/Level,
+                    slab = paste(subset_data$Author, subset_data$Year, sep = ", "))
+    
+    # Obtain the pooled effect size
+    res <- summary(model)
+    pooled_effect <- coef(model)
+    ci_lb <- res$ci.lb
+    ci_ub <- res$ci.ub
+    p_value <- res$pval
+    W <- diag(1/res$vi)
+    X <- model.matrix(res)
+    P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+    I2 <- 100 * res$sigma2[res$levels - 1] / (sum(res$sigma2) + (res$k-res$p)/sum(diag(P)))
+    
+    # Store the pooled effect size
+    results[i, ] <- c(study_ids[i], exp(pooled_effect), exp(ci_lb), exp(ci_ub), p_value, I2)
+  }
+  return(results)
+}
+
+# Perform leave-one-out analysis
+results <- leave_one_out_analysis(MainData, "LogOR", "vi", "Study")
+
+
+
+
+```
+#---forest plot for leave one out--
+```{r}
+# Assuming 'results' contains the leave-one-out analysis results
+# Assuming 'MainData' is your dataset
+
+# Extract relevant columns from the results matrix
+forest_data <- data.frame(
+  Study_ID = results[, "Study_ID"],
+  Pooled_OR = results[, "Pooled_OR"],
+  ci_lb = results[, "ci.lb"],
+  ci_ub = results[, "ci_ub"],
+  P_Value = results[, "P_Value"]
+)
+
+leave1out <- ggplot(forest_data, aes(x= Pooled_OR, y=study,xmin=ci_lb, xmax=ci_ub)) +
+  geom_point() +
+  geom_errorbarh(height=0.1) +
+  scale_y_discrete(labels=forest_data$study) +
+  labs(title='Leave one out analysis', x='Pooled Effect Size', y='Study') +
+  geom_vline(xintercept=0, color='black', linetype='dashed', alpha=0.5) +
+  theme_minimal()
+leave1out
+
+
+```
+
+
+

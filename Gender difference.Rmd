@@ -1,0 +1,923 @@
+---
+title: "Gender Difference and Onset Age"
+author: "Pengyuan Yang"
+date: "2023-03-11"
+output: html_document
+---
+
+
+
+```{r}
+library(readxl) 
+library(writexl)
+library(metafor)
+library(ggplot2)
+theme_set(theme_bw())
+```
+
+```{r}
+GenderDiff <- read_xlsx("C:/Users/Lauren/Desktop/meta analysis/data analysis/input/gender difference-20240131.xlsx")
+
+GenderDiff$First_Author <- sub(",.*", " et al.", GenderDiff$First_Author)
+```
+
+#---Gender difference preprocess---#
+```{r}
+GenderDiffNum <- subset(GenderDiff, is.na(GenderDiff[,32])==FALSE | is.na(GenderDiff[,33])==FALSE)
+#GenderDiffNum <- GenderDiffNum[-c(24,25,26,28),] #One study included in OR
+GenderDiffMS <- subset(GenderDiff, is.na(GenderDiff[,40])==FALSE | is.na(GenderDiff[,42])==FALSE)
+GenderDiffOR <- subset(GenderDiff, is.na(GenderDiff[,48])==FALSE | is.na(GenderDiff[,51])==FALSE)
+
+#preprocess Num data
+id <- nrow(GenderDiffNum)
+
+StudyInfo <- rbind(GenderDiffNum[,c(7:31)],GenderDiffNum[,c(7:31)])
+
+GenderORNum <- as.data.frame(matrix(rep(NA,id*6),nrow = id*2, ncol = 3, byrow = TRUE))
+GenderLogORNum <- as.data.frame(matrix(rep(NA,id*6),nrow = id*2, ncol = 3, byrow = TRUE))
+colnames(GenderORNum) <- c("OR", "LCI", "UCI")
+colnames(GenderLogORNum) <- c("OR", "LCI", "UCI")
+
+
+i=1
+j=32
+while (i<=id) {
+     if (is.na(GenderDiffNum[i,j])==FALSE){
+        grp1yesM = as.numeric(GenderDiffNum[i,j])
+        grp1noM = as.numeric(GenderDiffNum[i,j+2])
+        grp2yesM = as.numeric(GenderDiffNum[i,j+4])
+        grp2noM = as.numeric(GenderDiffNum[i,j+6])
+        
+     
+        vM <- 1/grp1yesM + 1/grp1noM + 1/grp2yesM + 1/grp2noM
+        esM <- (grp1yesM * grp2noM)/(grp1noM * grp2yesM)
+        GenderORNum[i,1] <- esM
+        GenderORNum[i,2] <- exp(log(esM)-1.96*sqrt(vM))
+        GenderORNum[i,3] <- exp(log(esM)+1.96*sqrt(vM))
+        GenderLogORNum[i,1] <- log(esM)
+        GenderLogORNum[i,2] <- log(esM)-1.96*sqrt(vM)
+        GenderLogORNum[i,3] <- log(esM)+1.96*sqrt(vM)
+        
+     }
+     if (is.na(GenderDiffNum[i,j+1])==FALSE){
+        grp1yesF = as.numeric(GenderDiffNum[i,j+1])
+        grp1noF = as.numeric(GenderDiffNum[i,j+3])
+        grp2yesF = as.numeric(GenderDiffNum[i,j+5])
+        grp2noF = as.numeric(GenderDiffNum[i,j+7])
+        
+     
+        vF <- 1/grp1yesF + 1/grp1noF + 1/grp2yesF + 1/grp2noF
+        esF <- (grp1yesF * grp2noF)/(grp1noF * grp2yesF)
+        GenderORNum[i+id,1] <- esF
+        GenderORNum[i+id,2] <- exp(log(esF)-1.96*sqrt(vF))
+        GenderORNum[i+id,3] <- exp(log(esF)+1.96*sqrt(vF))
+        GenderLogORNum[i+id,1] <- log(esF)
+        GenderLogORNum[i+id,2] <- log(esF)-1.96*sqrt(vF)
+        GenderLogORNum[i+id,3] <- log(esF)+1.96*sqrt(vF)
+        
+      }
+
+      i=i+1
+}
+
+GenderORNum <- cbind(StudyInfo, GenderORNum)
+GenderORNum$Gender <- gl(2,id, labels = c("Male", "Female"))
+GenderLogORNum <- cbind(StudyInfo, GenderLogORNum)
+GenderLogORNum$Gender <- gl(2,id, labels = c("Male", "Female"))
+
+#preprocess MS data
+id <- nrow(GenderDiffMS)
+
+StudyInfo <- rbind(GenderDiffMS[,c(7:31)], GenderDiffMS[,c(7:31)])
+
+GenderORMS <- as.data.frame(matrix(rep(NA,id*6),nrow = id*2, ncol = 3, byrow = TRUE))
+GenderLogORMS <- as.data.frame(matrix(rep(NA,id*6),nrow = id*2, ncol = 3, byrow = TRUE))
+colnames(GenderORMS) <- c("OR", "LCI", "UCI")
+colnames(GenderLogORMS) <- c("OR", "LCI", "UCI")
+
+i=1
+j=40  # it should be 40, the column starting with the mean/sd data
+while (i<=id) {
+      grp1mM = as.numeric(GenderDiffMS[i,j])
+      grp1sdM = as.numeric(GenderDiffMS[i,j+1])
+      grp1mF = as.numeric(GenderDiffMS[i,j+2])
+      grp1sdF = as.numeric(GenderDiffMS[i,j+3])
+      
+      grp2mM = as.numeric(GenderDiffMS[i,j+4])
+      grp2sdM = as.numeric(GenderDiffMS[i,j+5])
+      grp2mF = as.numeric(GenderDiffMS[i,j+6])
+      grp2sdF = as.numeric(GenderDiffMS[i,j+7])
+      
+      grp1nM = as.numeric(GenderDiffMS[i,28])  # I changed the column of sample size for the 4 groups
+      grp1nF = as.numeric(GenderDiffMS[i,29])
+      grp2nM = as.numeric(GenderDiffMS[i,30])
+      grp2nF = as.numeric(GenderDiffMS[i,31])
+      # Here i need to check carefully if it is correct.
+      pooledSDM <- sqrt(((grp1nM-1)*grp1sdM^2+(grp2nM-1)*grp2sdM^2)/(grp1nM+grp2nM-2))
+      pooledSDF <- sqrt(((grp1nF-1)*grp1sdF^2+(grp2nF-1)*grp2sdF^2)/(grp1nF+grp2nF-2))
+      
+      esM <- (grp1mM-grp2mM)/pooledSDM
+      esF <- (grp1mF-grp2mF)/pooledSDF
+      
+      SEM <- sqrt((grp1nM+grp2nM)/(grp1nM*grp2nM)+esM^2/(2*(grp1nM+grp2nM)))
+      SEF <- sqrt((grp1nF+grp2nF)/(grp1nF*grp2nF)+esF^2/(2*(grp1nF+grp2nF)))
+      
+      GenderORMS[i,1] <- exp(esM*pi/sqrt(3))
+      GenderORMS[i,2] <- exp((esM-1.96*SEM)*pi/sqrt(3))
+      GenderORMS[i,3] <- exp((esM+1.96*SEM)*pi/sqrt(3))
+      
+      GenderORMS[i+id,1] <- exp(esF*pi/sqrt(3))
+      GenderORMS[i+id,2] <- exp((esF-1.96*SEF)*pi/sqrt(3))
+      GenderORMS[i+id,3] <- exp((esF+1.96*SEF)*pi/sqrt(3))
+      
+      GenderLogORMS[i,1] <- esM*pi/sqrt(3)
+      GenderLogORMS[i,2] <- (esM-1.96*SEM)*pi/sqrt(3)
+      GenderLogORMS[i,3] <- (esM+1.96*SEM)*pi/sqrt(3)
+      
+      GenderLogORMS[i+id,1] <- esF*pi/sqrt(3)
+      GenderLogORMS[i+id,2] <- (esF-1.96*SEF)*pi/sqrt(3)
+      GenderLogORMS[i+id,3] <- (esF+1.96*SEF)*pi/sqrt(3)
+
+      i=i+1
+}
+
+GenderORMS <- cbind(StudyInfo, GenderORMS)
+GenderORMS$Gender <- gl(2,id, labels = c("Male", "Female"))
+GenderLogORMS <- cbind(StudyInfo, GenderLogORMS)
+GenderLogORMS$Gender <- gl(2,id, labels = c("Male", "Female"))
+
+#preprocess OR data
+GenderDiffOR <- GenderDiffOR[,-c(1:6, 32:47)]
+id <- nrow(GenderDiffOR)
+StudyInfo <- rbind(GenderDiffOR[,1:25], GenderDiffOR[,1:25])
+
+OR <- as.data.frame(matrix(rep(NA,id*6),nrow = id*2, ncol = 3, byrow = TRUE))
+colnames(OR) <- c("OR", "LCI", "UCI")
+OR[c(1:id),] <- GenderDiffOR[,c(26:28)]
+OR[c((id+1):(id*2)),] <- GenderDiffOR[,c(29:31)]
+OR <- apply(OR, 2, as.numeric)
+logOR <- log(OR)
+
+GenderDiffOR <- cbind(StudyInfo, OR)
+GenderDiffOR$Gender <- gl(2,id, labels = c("Male", "Female"))
+GenderDiffLogOR <- cbind(StudyInfo, logOR)
+GenderDiffLogOR$Gender <- gl(2,id, labels = c("Male", "Female"))
+
+#integrate
+GenderORData <- rbind(GenderORNum, GenderORMS, GenderDiffOR)
+GenderORData <- GenderORData[complete.cases(GenderORData$OR),]
+GenderLogORData <- rbind(GenderLogORNum, GenderLogORMS, GenderDiffLogOR)
+GenderLogORData <- GenderLogORData[complete.cases(GenderLogORData$OR),]
+
+
+# exclude duplicates
+GenderORData <- subset(GenderORData, GenderORData$First_Author!= "Furukawa (adjusted) et al.")
+GenderORData <- subset(GenderORData, GenderORData$First_Author!= "Mansueto (adjusted) et al.")
+# excluded ones without female and male sample size
+GenderORData <- subset(GenderORData, GenderORData$First_Author!= "McGrath et al.") 
+GenderORData <- subset(GenderORData,GenderORData$First_Author!= "Hoffmann et al.")
+GenderORData <- subset(GenderORData, GenderORData$First_Author!= "Barry et al.")
+
+GenderLogORData <- subset(GenderLogORData, GenderLogORData$First_Author!= "Furukawa (adjusted) et al.")
+GenderLogORData <- subset(GenderLogORData, GenderLogORData$First_Author!= "Mansueto (adjusted) et al.")
+# excluded ones without female and male sample size
+GenderLogORData <- subset(GenderLogORData, GenderLogORData$First_Author!= "McGrath et al.") 
+GenderLogORData <- subset(GenderLogORData,GenderLogORData$First_Author!= "Hoffmann et al.")
+GenderLogORData <- subset(GenderLogORData, GenderLogORData$First_Author!= "Barry et al.")
+
+
+#save
+write_xlsx(GenderORData,"C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/GenderOR.xlsx")
+write_xlsx(GenderLogORData,"C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/GenderLogOR.xlsx")
+
+```
+#---prepare data---
+```{r}
+GenderData <- read_xlsx("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/GenderLogOR.xlsx")
+
+
+#GenderData <- subset(GenderData, GenderData$First_Author!= "Millman et al.") #Exclude outliers
+#GenderData <- subset(GenderData, GenderData$First_Author!= "Gayer-Anderson (SA)") 
+
+
+GenderData <- subset(GenderData, is.na(GenderData$OR)==FALSE)
+GenderData$se <- (GenderData$UCI-GenderData$LCI)/(1.96*2)
+colnames(GenderData)[1:2] <- c("Author", "Year")
+write_xlsx(GenderData, "C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/GenderData.xlsx")
+```
+
+
+#3.3---Forest plot---#
+```{r}
+GenderData <- read_excel("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/subgroup/GenderLogOR_main.xlsx")
+GenderData <- subset(GenderData, GenderData$Author!= "Millman et al.") #Exclude outliers
+#get the number of male and female ORs
+maleNum <- nrow(subset(GenderData, GenderData$Gender=="Male"))
+femaleNum <- nrow(subset(GenderData, GenderData$Gender=="Female"))
+Male <- subset(GenderData, Gender=="Male")
+Female <- subset(GenderData, Gender=="Female")
+GenderData <- rbind(Male[order(Male$Year, Male$Author, decreasing = T),],
+                    Female[order(Female$Year, Female$Author, decreasing = T),])
+GenderData$Gender <- factor(GenderData$Gender, levels = c("Male", "Female"))
+GenderData$Sample <- ifelse(GenderData$Gender=="Female",GenderData$N_Total_Female,GenderData$N_Total_Male)
+
+# fit random-effects model
+res <- rma(yi=OR, sei=se, data=GenderData, slab=paste(Author, Year, sep=", "))
+
+# a little helper function to add Q-test, I^2, and tau^2 estimate info
+mlabfun <- function(text, res) {
+   list(bquote(paste(.(text),
+      " (Q = ", .(formatC(res$QE, digits=2, format="f")),
+      ", df = ", .(res$k - res$p),
+      ", p ", .(metafor:::.pval(res$QEp, digits=2, showeq=TRUE, sep=" ")), "; ",
+      I^2, " = ", .(formatC(res$I2, digits=1, format="f")), "%, ",
+      tau^2, " = ", .(formatC(res$tau2, digits=2, format="f")), ")")))}
+
+### set up forest plot (with 2x2 table counts added; the 'rows' argument is
+### used to specify in which rows the outcomes will be plotted)
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/Genderplot_excluding0317.jpg", width =3000, heigh = 4500, res=500)
+forest(res, at=log(c(0.05, 0.25, 1, 5, 25, 80)), atransf=exp, ilab=cbind(Sample), ilab.xpos=-4, xlim=c(-11,8), level=95,
+       cex=0.75, ylim=c(-1, maleNum+femaleNum+10), 
+       order= Gender, 
+       rows=c(3:(maleNum+2), (maleNum+7):(maleNum+femaleNum+6)), 
+       header=c("Author, Year","Odds Ratio [95% CI]"), xlab="Odds Ratio (Log Scale)",addfit = FALSE)
+
+abline(h = 0, lty = 1, col = "black", lwd = 1)
+### set font expansion factor (as in forest() above) and use a bold font
+op <- par(cex=0.75, font=2)
+text(-4,maleNum+femaleNum+9, c("Sample Size"))
+ 
+### switch to bold italic font
+par(font=4)
+ 
+### add text for the subgroups
+text(-11, c(maleNum+femaleNum+7,maleNum+3), pos=4, 
+     c("Female", "Male"))
+ 
+### set par back to the original settings
+par(op)
+ 
+### fit random-effects model in the three subgroups
+res.male <- rma(yi=OR, sei=se, subset=(Gender=="Male"), data=GenderData)
+res.female <- rma(yi=OR, sei=se, subset=(Gender=="Female"), data=GenderData)
+ 
+### add summary polygons for the three subgroups
+addpoly(res.female, row=maleNum+5.5, mlab=mlabfun("RE Model for subgroup", res.female))
+addpoly(res.male, row= 1.5, mlab=mlabfun("RE Model for subgroup", res.male))
+ 
+### fit meta-regression model to test for subgroup differences
+res.meta <- rma(yi=OR, sei=se, mods = ~ Gender, data=GenderData)
+summary(res.meta)
+ 
+### add text for the test of subgroup differences
+text(-11, -2, pos=4, cex=0.75, bquote(paste("Test for Subgroup Differences: ",
+     Q[M], " = ", .(formatC(res.meta$QM, digits=2, format="f")), ", df = ", .(res.meta$p - 1),
+     ", p = ", .(formatC(res.meta$QMp, digits=2, format="f")))),font = 2)
+
+dev.off
+
+```
+#--pdf for gender differences---
+```{r}
+pdf("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/Genderplot_excluding0317.pdf", width = 10, heigh = 15)
+forest(res, at=log(c(0.05, 0.25, 1, 5, 25, 80)), atransf=exp, ilab=cbind(Sample), ilab.xpos=-4, xlim=c(-11,8), level=95,
+       cex=0.75, ylim=c(-1, maleNum+femaleNum+10), 
+       order= Gender, 
+       rows=c(3:(maleNum+2), (maleNum+7):(maleNum+femaleNum+6)), 
+       header=c("Author, Year","Odds Ratio [95% CI]"), xlab="Odds Ratio (Log scale)",addfit = FALSE)
+
+abline(h = 0, lty = 1, col = "black", lwd = 1)
+### set font expansion factor (as in forest() above) and use a bold font
+op <- par(cex=0.75, font=2)
+text(-4,maleNum+femaleNum+9, c("Sample Size"))
+ 
+### switch to bold italic font
+par(font=4)
+ 
+### add text for the subgroups
+text(-11, c(maleNum+femaleNum+7,maleNum+3), pos=4, 
+     c("Female", "Male"))
+ 
+### set par back to the original settings
+par(op)
+ 
+### fit random-effects model in the three subgroups
+res.male <- rma(yi=OR, sei=se, subset=(Gender=="Male"), data=GenderData)
+res.female <- rma(yi=OR, sei=se, subset=(Gender=="Female"), data=GenderData)
+ 
+### add summary polygons for the three subgroups
+addpoly(res.female, row=maleNum+5.5, mlab=mlabfun("RE Model for subgroup", res.female))
+addpoly(res.male, row= 1.5, mlab=mlabfun("RE Model for subgroup", res.male))
+ 
+### fit meta-regression model to test for subgroup differences
+res.meta <- rma(yi=OR, sei=se, mods = ~ Gender, data=GenderData)
+summary(res.meta)
+ 
+### add text for the test of subgroup differences
+text(-11, -2, pos=4, cex=0.75, bquote(paste("Test for Subgroup Differences: ",
+     Q[M], " = ", .(formatC(res.meta$QM, digits=2, format="f")), ", df = ", .(res.meta$p - 1),
+     ", p = ", .(formatC(res.meta$QMp, digits=2, format="f")))),font = 2)
+
+dev.off
+```
+#--- leave 1 out analysis
+```{r}
+df_male <- leave1out(res.male)
+min_row <- df_male[df_male$estimate == min(df_male$estimate), ]
+min_ci_lb <- exp(min_row$ci.lb)
+min_ci_ub <- exp(min_row$ci.ub)
+cat("The minium of OR for male is",exp(min(df_male$estimate)),":", min_ci_lb, "-", min_ci_ub)
+
+max_row <- df_male[df_male$estimate == max(df_male$estimate), ]
+max_ci_lb <- exp(max_row$ci.lb)
+max_ci_ub <- exp(max_row$ci.ub)
+cat("The maximum of OR for male  is",max(exp(df_male$estimate)),":", max_ci_lb, "-", max_ci_ub)
+
+df_female <- leave1out(res.female)
+min_row <- df_female[df_female$estimate == min(df_female$estimate), ]
+min_ci_lb <- exp(min_row$ci.lb)
+min_ci_ub <- exp(min_row$ci.ub)
+cat("The minium of OR for female  is",exp(min(df_female$estimate)),":", min_ci_lb, "-", min_ci_ub)
+
+max_row <- df_female[df_female$estimate == max(df_female$estimate), ]
+max_ci_lb <- exp(max_row$ci.lb)
+max_ci_ub <- exp(max_row$ci.ub)
+cat("The maximum of OR for female  is",exp(max(df_female$estimate)),":", max_ci_lb, "-", max_ci_ub)
+```
+
+
+
+
+Basic information
+```{r}
+# Assuming "Gender" is a column in GenderData
+num_male_rows <- nrow(subset(GenderData, Gender == "Male"))
+num_female_rows <- nrow(subset(GenderData, Gender == "Female"))
+
+# Print the results
+cat("Number of rows for Male:", num_male_rows, "\n")
+cat("Number of rows for Female:", num_female_rows, "\n")
+
+cat("The total males of gender analysis is:",sum(GenderData[,"N_Total_Male"]), "\n")
+cat("The total females of gender analysis is:",sum(GenderData[,"N_Total_Female"]), "\n")
+cat("The total sample size of patients analysis in gender analysis is:",sum(GenderData$N_PT,na.rm = TRUE), "\n")
+cat("The total sample size of Cases analysis in gender analysis is:",sum(GenderData$N_HC,na.rm = TRUE), "\n")
+
+
+```
+
+#---publication bias
+```{r}
+# egger test and fail safe N
+egger_test_male <- regtest(res.male)
+egger_test_male
+
+egger_test_female <- regtest(res.female)
+egger_test_female
+
+GenderData_male <-  subset(GenderData,GenderData$Gender =="Male")
+
+fsn(res.male,sei = se, data=GenderData, type = "Orwin", target = 0.1)
+
+GenderData_female <-  subset(GenderData,GenderData$Gender =="Female")
+
+fsn(res.female,sei = se, data=GenderData_female, type = "Orwin", target = 0.1)
+
+
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/data analysis/output/Gender difference/publication bias/female_male_overall.jpg", width = 3000, height = 4000, res = 350)
+
+# Define the layout with two rows and one column
+par(mfrow = c(2, 1))
+
+# Plot the funnel plot for the threat dimension
+metafor::funnel(res.female, main = "Funnel Plot for the Overall Adversity in Woman")
+
+# Plot the funnel plot for the deprivation dimension
+metafor::funnel(res.male, main = "Funnel Plot for the Overall Adversity in Men ")
+
+# Close the jpeg device
+dev.off()
+```
+
+
+
+
+#3.4 Data only with CT
+```{r}
+Gender_MR <- read_xlsx("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/subgroup/GenderLogOR_main.xlsx")
+
+# excluded ones without female and male sample size
+Gender_CT <- subset(Gender_MR, Gender_MR$Author!= "Millman et al.") #Exclude outliers
+Gender_CT <-  subset(Gender_MR, Gender_MR$`with CT`!= "N")
+
+res.meta_sex_CT <- rma(yi=OR, sei=se, mods = ~ Gender, data=Gender_CT)
+summary(res.meta_sex_CT)
+
+GenderData <- Gender_CT
+#------forest plot-----
+maleNum <- nrow(subset(GenderData, GenderData$Gender=="Male"))
+femaleNum <- nrow(subset(GenderData, GenderData$Gender=="Female"))
+
+# fit random-effects model
+res <- rma(yi=OR, sei=se, data=GenderData, slab=paste(Author, Year, sep=", "))
+
+# a little helper function to add Q-test, I^2, and tau^2 estimate info
+mlabfun <- function(text, res) {
+   list(bquote(paste(.(text),
+      " (Q = ", .(formatC(res$QE, digits=2, format="f")),
+      ", df = ", .(res$k - res$p),
+      ", p ", .(metafor:::.pval(res$QEp, digits=2, showeq=TRUE, sep=" ")), "; ",
+      I^2, " = ", .(formatC(res$I2, digits=1, format="f")), "%, ",
+      tau^2, " = ", .(formatC(res$tau2, digits=2, format="f")), ")")))}
+
+### used to specify in which rows the outcomes will be plotted)
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/Genderplot_CT.jpg", width =3000, heigh = 4500, res=300)
+forest(res, at=log(c(0.05, 0.25, 1, 5, 25, 80)), atransf=exp, xlim=c(-11,8), level=95,
+       cex=0.75, ylim=c(-1, maleNum+femaleNum+10), 
+       order=Gender, 
+       rows=c(3:(maleNum+2), (maleNum+7):(maleNum+femaleNum+6)), 
+       header=c("Author,Year","Odds Ratio [95% CI]"), xlab="Odds Ratio (Log scale)", mlab=mlabfun("RE Model for All Studies", res))
+ 
+### set font expansion factor (as in forest() above) and use a bold font
+op <- par(cex=0.75, font=2)
+#text(c(-5.5, -3.5),     csNum+cohortNum+ccNum+13, c("Country", "Sample Size"))
+ 
+### switch to bold italic font
+par(font=4)
+ 
+### add text for the subgroups
+text(-11, c(maleNum+femaleNum+7,maleNum+3), pos=4, 
+     c("Female", "Male"))
+ 
+### set par back to the original settings
+par(op)
+ 
+### fit random-effects model in the three subgroups
+res.male <- rma(yi=OR, sei=se, subset=(Gender=="Male"), data=GenderData)
+res.female <- rma(yi=OR, sei=se, subset=(Gender=="Female"), data=GenderData)
+ 
+### add summary polygons for the three subgroups
+addpoly(res.female, row=maleNum+5.5, mlab=mlabfun("RE Model for subgroup", res.female))
+addpoly(res.male, row= 1.5, mlab=mlabfun("RE Model for subgroup", res.male))
+ 
+### fit meta-regression model to test for subgroup differences
+res.meta <- rma(yi=OR, sei=se, mods = ~ Gender, data=GenderData)
+summary(res.meta)
+ 
+### add text for the test of subgroup differences
+text(-11, -2.5, pos=4, cex=0.7, bquote(paste("Test for Subgroup Differences: ",
+     Q[M], " = ", .(formatC(res.meta$QM, digits=2, format="f")), ", df = ", .(res.meta$p - 1),
+     ", p = ", .(formatC(res.meta$QMp, digits=2, format="f")))))
+
+dev.off
+
+```
+
+#3.5--sexual abuse and forest plot
+```{r}
+Gender_SA <- read.csv("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/subgroup/GenderLogOR_SA.csv")
+Gender_SA <- subset(Gender_SA, Gender_SA$Author!= "Millman et al.") #Exclude outliers
+
+
+res.meta_sex_SA <- rma(yi=OR, sei=se, mods = ~ Gender, data=Gender_SA)
+summary(res.meta_sex_SA)
+
+res.meta_sex_SA2 <- rma(yi=OR, sei=se, mods = ~ Gender + Sample.Size_included, data=Gender_SA)
+summary(res.meta_sex_SA2)
+
+#-----------forest plot
+GenderData <- Gender_SA
+
+Male <- subset(GenderData, Gender=="Male")
+Female <- subset(GenderData, Gender=="Female")
+GenderData <- rbind(Male[order(Male$Year, Male$Author, decreasing = T),],
+                    Female[order(Female$Year, Female$Author, decreasing = T),])
+GenderData$Gender <- factor(GenderData$Gender, levels = c("Male", "Female"))
+# Create a separate data frame for the forest plot
+
+GenderData$AuthorYear = paste(GenderData$Author, GenderData$Year, sep = ", ")
+
+#get the number of male and female ORs
+maleNum <- nrow(subset(GenderData, GenderData$Gender=="Male"))
+femaleNum <- nrow(subset(GenderData, GenderData$Gender=="Female"))
+GenderData$Sample <- ifelse(GenderData$Gender=="Female",GenderData$N_Total_Female,GenderData$N_Total_Male)
+
+# fit random-effects model
+res <- rma(yi=OR, sei=se, data=GenderData, slab = paste(Author, Year, sep=", "))
+
+### fit random-effects model in the three subgroups
+res.male <- rma(yi=OR, sei=se, data=GenderData[GenderData$Gender == "Male", ])
+res.male
+res.female <- rma(yi=OR, sei=se, data=GenderData[GenderData$Gender == "Female", ])
+res.female
+res.male$data  <- res.male$data[order(res.male$data$Year, res.male$data$Author), ]
+res.female$data<- res.male$data[order(res.male$data$Year, res.male$data$Author), ]
+
+compute_prediction_interval <- function(res, df, alpha = 0.05) {
+  lower_bound <- exp(res$b - qt(p = alpha / 2, df = df-1, lower.tail = FALSE) * sqrt((res$se)^2 + res$tau2))
+  upper_bound <- exp(res$b + qt(p = alpha / 2, df = df-1, lower.tail = FALSE) * sqrt((res$se)^2 + res$tau2))
+  return(c(lower_bound, upper_bound))
+}
+
+
+# Case-control study
+pred_interval_male <- compute_prediction_interval(res.female, df = 9)
+# Cross-sectional study
+pred_interval_female <- compute_prediction_interval(res.male, df = 5)  
+# Cohort study
+
+
+result_prediction_interval <- data.frame(
+  Study_Type = c("SA for male","SA for female"),
+  Lower_Bound = c(pred_interval_male[1], pred_interval_female[1]),
+  Upper_Bound = c(pred_interval_male[2],pred_interval_female[2])
+)
+
+result_prediction_interval
+
+```
+#---forest plot for SA
+```{r}
+# a little helper function to add Q-test, I^2, and tau^2 estimate info
+mlabfun <- function(text, res) {
+   list(bquote(paste(.(text),
+      " (Q = ", .(formatC(res$QE, digits=2, format="f")),
+      ", df = ", .(res$k - res$p),
+      ", p ", .(metafor:::.pval(res$QEp, digits=2, showeq=TRUE, sep=" ")), "; ",
+      I^2, " = ", .(formatC(res$I2, digits=1, format="f")), "%, ",
+      tau^2, " = ", .(formatC(res$tau2, digits=2, format="f")), ")")))}
+
+### set up forest plot (with 2x2 table counts added; the 'rows' argument is
+### used to specify in which rows the outcomes will be plotted)
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/Genderplot_SA.jpg", width =3000, heigh = 2600, res=350)
+forest(res, at=log(c(0.05, 0.25, 1, 5, 25, 80)), atransf=exp, xlim=c(-11,8), level=95,ilab=cbind(Sample), ilab.xpos=-4,
+       cex=0.70, ylim=c(-1, maleNum+femaleNum+10), 
+       order= Gender,
+       rows=c(3:(maleNum+2), (maleNum+7):(maleNum+femaleNum+6)), 
+       header=c("Author,Year","Odds Ratio [95% CI]"), xlab="Odds Ratio (Log scale)", addfit = FALSE)
+
+abline(h = 0, lty = 1, col = "black", lwd = 1) 
+### set font expansion factor (as in forest() above) and use a bold font
+op <- par(cex=0.75, font=2)
+text(-4, maleNum+femaleNum+9, c("Sample Size"))
+ 
+### switch to bold italic font
+par(font=4)
+ 
+### add text for the subgroups
+text(-11, c(maleNum+femaleNum+7,maleNum+3), pos=4, 
+     c("Female", "Male"))
+ 
+### set par back to the original settings
+par(op)
+ 
+
+### add summary polygons for the three subgroups
+addpoly(res.female, row=maleNum+5.5, mlab=mlabfun("RE Model for subgroup", res.female))
+addpoly(res.male, row= 1.5, mlab=mlabfun("RE Model for subgroup", res.male))
+ 
+### fit meta-regression model to test for subgroup differences
+res.meta <- rma(yi=OR, sei=se, mods = ~ Gender, data=GenderData)
+summary(res.meta)
+ 
+### add text for the test of subgroup differences
+# Calculate the position below the last row
+
+# Add text for the test of subgroup differences
+text(x = -11, y =-1, pos = 4, cex = 0.70, 
+     bquote(paste("Test for Subgroup Differences: ",
+                   Q[M], " = ", .(formatC(res.meta$QM, digits = 2, format = "f")), 
+                   ", df = ", .(res.meta$p - 1),
+                   ", p = ", .(formatC(res.meta$QMp, digits = 2, format = "f")))))
+
+
+dev.off
+
+```
+
+# leave 1 out analyses
+```{r}
+df_male <- leave1out(res.male)
+min_row <- df_male[df_male$estimate == min(df_male$estimate), ]
+min_ci_lb <- exp(min_row$ci.lb)
+min_ci_ub <- exp(min_row$ci.ub)
+cat("The minium of OR for male is",exp(min(df_male$estimate)),":", min_ci_lb, "-", min_ci_ub)
+
+max_row <- df_male[df_male$estimate == max(df_male$estimate), ]
+max_ci_lb <- exp(max_row$ci.lb)
+max_ci_ub <- exp(max_row$ci.ub)
+cat("The maximum of OR for male  is",max(exp(df_male$estimate)),":", max_ci_lb, "-", max_ci_ub)
+
+df_female <- leave1out(res.female)
+min_row <- df_female[df_female$estimate == min(df_female$estimate), ]
+min_ci_lb <- exp(min_row$ci.lb)
+min_ci_ub <- exp(min_row$ci.ub)
+cat("The minium of OR for female  is",exp(min(df_female$estimate)),":", min_ci_lb, "-", min_ci_ub)
+
+max_row <- df_female[df_female$estimate == max(df_female$estimate), ]
+max_ci_lb <- exp(max_row$ci.lb)
+max_ci_ub <- exp(max_row$ci.ub)
+cat("The maximum of OR for female  is",exp(max(df_female$estimate)),":", max_ci_lb, "-", max_ci_ub)
+
+```
+
+
+
+
+# funel plots in SA
+```{r}
+egger_test_male <- regtest(res.male)
+egger_test_male
+
+egger_test_female <- regtest(res.female)
+egger_test_female
+
+GenderData_male <-  subset(GenderData,GenderData$Gender =="Male")
+
+fsn(res.male,sei = se, data=GenderData, type = "Orwin", target = 0.1)
+
+GenderData_female <-  subset(GenderData,GenderData$Gender =="Female")
+
+fsn(res.female,sei = se, data=GenderData_female, type = "Orwin", target = 0.1)
+
+
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/data analysis/output/Gender difference/publication bias/female_male_SA.jpg", width = 3000, height = 4000, res = 350)
+
+# Define the layout with two rows and one column
+par(mfrow = c(2, 1))
+
+# Plot the funnel plot for the threat dimension
+metafor::funnel(res.female, main = "Funnel Plot for SA in Woman")
+
+# Plot the funnel plot for the deprivation dimension
+metafor::funnel(res.male, main = "Funnel Plot for SA in Men ")
+
+# Close the jpeg device
+dev.off()
+
+```
+
+
+
+
+#3.6--Physical abuse and forest plot
+```{r}
+Gender_PA <- read.csv("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/subgroup/GenderLogOR_PA.csv")
+Gender_PA <- subset(Gender_PA, Gender_PA$Author!= "Millman et al.") #Exclude outliers
+
+
+res.meta_sex_PA <- rma(yi=OR, sei=se, mods = ~ Gender, data=Gender_PA)
+summary(res.meta_sex_PA)
+GenderData <- Gender_PA
+
+Male <- subset(GenderData, Gender=="Male")
+Female <- subset(GenderData, Gender=="Female")
+GenderData <- rbind(Male[order(Male$Year, Male$Author, decreasing = T),],
+                    Female[order(Female$Year, Female$Author, decreasing = T),])
+GenderData$Gender <- factor(GenderData$Gender, levels = c("Male", "Female"))
+# Create a separate data frame for the forest plot
+
+GenderData$AuthorYear = paste(GenderData$Author, GenderData$Year, sep = ", ")
+
+#get the number of male and female ORs
+maleNum <- nrow(subset(GenderData, GenderData$Gender=="Male"))
+femaleNum <- nrow(subset(GenderData, GenderData$Gender=="Female"))
+GenderData$Sample <- ifelse(GenderData$Gender=="Female",GenderData$N_Total_Female,GenderData$N_Total_Male)
+
+# fit random-effects model
+res <- rma(yi=OR, sei=se, data=GenderData, slab = paste(Author, Year, sep=", "))
+### fit random-effects model in the three subgroups
+res.male <- rma(yi=OR, sei=se, data=GenderData[GenderData$Gender == "Male", ])
+res.male 
+res.female <- rma(yi=OR, sei=se, data=GenderData[GenderData$Gender == "Female", ])
+res.female
+res.male$data  <- res.male$data[order(res.male$data$Year, res.male$data$Author), ]
+res.female$data<- res.male$data[order(res.male$data$Year, res.male$data$Author), ]
+
+
+compute_prediction_interval <- function(res, df, alpha = 0.05) {
+  lower_bound <- exp(res$b - qt(p = alpha / 2, df = df-1, lower.tail = FALSE) * sqrt((res$se)^2 + res$tau2))
+  upper_bound <- exp(res$b + qt(p = alpha / 2, df = df-1, lower.tail = FALSE) * sqrt((res$se)^2 + res$tau2))
+  return(c(lower_bound, upper_bound))
+}
+pred_interval_male <- compute_prediction_interval(res.male, df = 6)
+
+pred_interval_female <- compute_prediction_interval(res.female, df = 3)  
+
+
+
+result_prediction_interval <- data.frame(
+  Study_Type = c("PA for male","PA for female"),
+  Lower_Bound = c(pred_interval_male[1], pred_interval_female[1]),
+  Upper_Bound = c(pred_interval_male[2],pred_interval_female[2])
+)
+
+result_prediction_interval
+# a little helper function to add Q-test, I^2, and tau^2 estimate info
+
+print(result_prediction_interval)
+
+```
+
+#---leave 1 out analysis in PA
+```{r}
+df_male <- leave1out(res.male)
+min_row <- df_male[df_male$estimate == min(df_male$estimate), ]
+min_ci_lb <- exp(min_row$ci.lb)
+min_ci_ub <- exp(min_row$ci.ub)
+cat("The minium of OR for male is",exp(min(df_male$estimate)),":", min_ci_lb, "-", min_ci_ub)
+
+max_row <- df_male[df_male$estimate == max(df_male$estimate), ]
+max_ci_lb <- exp(max_row$ci.lb)
+max_ci_ub <- exp(max_row$ci.ub)
+cat("The maximum of OR for male  is",max(exp(df_male$estimate)),":", max_ci_lb, "-", max_ci_ub)
+
+df_female <- leave1out(res.female)
+min_row <- df_female[df_female$estimate == min(df_female$estimate), ]
+min_ci_lb <- exp(min_row$ci.lb)
+min_ci_ub <- exp(min_row$ci.ub)
+cat("The minium of OR for female  is",exp(min(df_female$estimate)),":", min_ci_lb, "-", min_ci_ub)
+
+max_row <- df_female[df_female$estimate == max(df_female$estimate), ]
+max_ci_lb <- exp(max_row$ci.lb)
+max_ci_ub <- exp(max_row$ci.ub)
+cat("The maximum of OR for female  is",exp(max(df_female$estimate)),":", max_ci_lb, "-", max_ci_ub)
+```
+
+
+#---forest plot of PA
+```{r}
+mlabfun <- function(text, res) {
+   list(bquote(paste(.(text),
+      " (Q = ", .(formatC(res$QE, digits=2, format="f")),
+      ", df = ", .(res$k - res$p),
+      ", p ", .(metafor:::.pval(res$QEp, digits=2, showeq=TRUE, sep=" ")), "; ",
+      I^2, " = ", .(formatC(res$I2, digits=1, format="f")), "%, ",
+      tau^2, " = ", .(formatC(res$tau2, digits=2, format="f")), ")")))}
+
+### set up forest plot (with 2x2 table counts added; the 'rows' argument is
+### used to specify in which rows the outcomes will be plotted)
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/Genderplot_PA.jpg", width =3000, heigh = 2000, res=350)
+forest(res, at=log(c(0.05, 0.25, 1, 5, 25, 80)), atransf=exp, xlim=c(-11,8), level=95,ilab=cbind(Sample), ilab.xpos=-4,
+       cex=0.70, ylim=c(-1, maleNum+femaleNum+10), 
+       order= Gender,
+       rows=c(3:(maleNum+2), (maleNum+7):(maleNum+femaleNum+6)), 
+       header=c("Author,Year","Odds Ratio [95% CI]"), xlab="Odds Ratio (Log scale)", addfit = FALSE)
+
+abline(h = 0, lty = 1, col = "black", lwd = 1) 
+### set font expansion factor (as in forest() above) and use a bold font
+op <- par(cex=0.75, font=2)
+text(-4, maleNum+femaleNum+9, c("Sample Size"))
+ 
+### switch to bold italic font
+par(font=4)
+ 
+### add text for the subgroups
+text(-11, c(maleNum+femaleNum+7,maleNum+3), pos=4, 
+     c("Female", "Male"))
+ 
+### set par back to the original settings
+par(op)
+ 
+
+### add summary polygons for the three subgroups
+addpoly(res.female, row=maleNum+5.5, mlab=mlabfun("RE Model for subgroup", res.female))
+addpoly(res.male, row= 1.5, mlab=mlabfun("RE Model for subgroup", res.male))
+ 
+### fit meta-regression model to test for subgroup differences
+res.meta <- rma(yi=OR, sei=se, mods = ~ Gender, data=GenderData)
+summary(res.meta)
+ 
+### add text for the test of subgroup differences
+# Calculate the position below the last row
+
+# Add text for the test of subgroup differences
+text(x = -11, y =-1, pos = 4, cex = 0.70, 
+     bquote(paste("Test for Subgroup Differences: ",
+                   Q[M], " = ", .(formatC(res.meta$QM, digits = 2, format = "f")), 
+                   ", df = ", .(res.meta$p - 1),
+                   ", p = ", .(formatC(res.meta$QMp, digits = 2, format = "f")))))
+
+
+dev.off
+```
+
+
+
+
+#---funplots in PA
+```{r}
+# egger test and fail safe N
+egger_test_male <- regtest(res.male)
+egger_test_male
+
+egger_test_female <- regtest(res.female)
+egger_test_female
+
+GenderData_male <-  subset(GenderData,GenderData$Gender =="Male")
+
+fsn(res.male,sei = se, data=GenderData, type = "Orwin", target = 0.1)
+
+GenderData_female <-  subset(GenderData,GenderData$Gender =="Female")
+
+fsn(res.female,sei = se, data=GenderData_female, type = "Orwin", target = 0.1)
+
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/data analysis/output/Gender difference/publication bias/female_male_PA.jpg", width = 3000, height = 4000, res = 350)
+
+# Define the layout with two rows and one column
+par(mfrow = c(2, 1))
+
+# Plot the funnel plot for the threat dimension
+metafor::funnel(res.female, main = "Funnel Plot for PA in Woman")
+
+# Plot the funnel plot for the deprivation dimension
+metafor::funnel(res.male, main = "Funnel Plot for PA in Men ")
+
+# Close the jpeg device
+dev.off()
+
+```
+
+
+
+
+#---multiple meta-regression
+```{r}
+Gender_MR <- read.csv("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/GenderData_added.csv")
+Gender_MR <- subset(Gender_MR, Gender_MR$Author!= "Gayer-Anderson (SA)") 
+# excluded ones without female and male sample size
+
+Gender_MR <- subset(Gender_MR, Gender_MR$Author!= "McGrath et al.")
+
+
+# with CT or withou CT
+CT <- factor(Gender_MR$with.CT)
+res.meta_mr1 <- rma(yi=OR, sei=se, mods = ~ CT, data=Gender_MR)
+summary(res.meta_mr1)
+
+# adversity type
+res.meta_mr2 <- rma(yi=OR, sei=se, mods = ~ adversity.type, data=Gender_MR)
+summary(res.meta_mr2)
+
+```
+
+# predication interval
+```{r}
+compute_prediction_interval <- function(res, df, alpha = 0.05) {
+  lower_bound <- exp(res$b - qt(p = alpha / 2, df = df-1, lower.tail = FALSE) * sqrt((res$se)^2 + res$tau2))
+  upper_bound <- exp(res$b + qt(p = alpha / 2, df = df-1, lower.tail = FALSE) * sqrt((res$se)^2 + res$tau2))
+  return(c(lower_bound, upper_bound))
+}
+
+
+# Case-control study
+pred_interval_male <- compute_prediction_interval(res.male, df = 33)
+# Cross-sectional study
+pred_interval_female <- compute_prediction_interval(res.female, df = 36)  
+# Cohort study
+
+
+result_prediction_interval <- data.frame(
+  Study_Type = c("CT for male","CT for female"),
+  Lower_Bound = c(pred_interval_male[1], pred_interval_female[1]),
+  Upper_Bound = c(pred_interval_male[2],pred_interval_female[2])
+)
+
+result_prediction_interval
+
+
+
+```
+
+
+
+#---articles number---
+```{r}
+df_num <- read_excel("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Main Analysis/article number.xlsx")
+
+df_num$Author <- df_num$First_Author
+
+GenderData <- read_excel("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Gender difference/subgroup/GenderLogOR_main.xlsx")
+GenderData <- subset(GenderData, GenderData$Author!= "Millman et al.") #Exclude
+
+combined_df <- merge(GenderData,df_num,by = c("Author", "Year"), all.x = FALSE)
+cat("Female")
+numbers_female <- combined_df[combined_df$Gender == "Female", "Number"]
+sorted_numbers <- sort(numbers_female)
+print(paste(sorted_numbers, collapse = ", "))
+
+
+cat("Male") 
+print(paste(combined_df[combined_df$Gender == "Male",]$Number, collapse = ", "))
+
+
+  rows_not_in_combined <- anti_join(GenderData, combined_df, by = c("Author", "Year"))
+
+# View the rows that are not in combined_df
+print(subset(rows_not_in_combined, Gender == "Female"))
+
+print(subset(rows_not_in_combined, Gender == "Male"))  
+```
+
+
+

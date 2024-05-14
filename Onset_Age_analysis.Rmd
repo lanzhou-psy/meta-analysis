@@ -1,0 +1,220 @@
+---
+title: "Age of Onset analysis"
+output: html_notebook
+author: Lan Zhou
+date: 2023/10/10
+---
+
+
+
+```{r}
+library(metafor)
+library(openxlsx)
+library(writexl)
+library(dplyr)
+```
+
+
+```{r}
+Onset_Age <- read.xlsx("C:/Users/Lauren/Desktop/meta analysis/data analysis/input/age of onset-20231010.xlsx")
+# Assuming Onset_Age is your data frame
+sorted_indices <- order(Onset_Age$Year, Onset_Age$First_Author)
+
+# Use the sorted indices to rearrange the data frame
+Onset_Age <- Onset_Age[sorted_indices, ]
+
+  
+```
+# cohen's d 
+```{r}
+# Calculate Cohen's d effect size for each study
+
+# Assuming Onset_Age is your data frame
+
+
+
+dat1 <- escalc(measure="SMD", m1i=Onset_Age$OnsetAge_with_trauma_mean, 
+               sd1i=OnsetAge_with_trauma_sd, n1i=N_PT_with_trauma,
+                              m2i=OnsetAge_without_trauma_mean, sd2i=OnsetAge_without_trauma_sd, n2i=N_PT_without_trauma, data=Onset_Age)
+res1 <- rma(yi, vi, data=dat1, slab=paste(First_Author, Year, sep=", "))
+res1
+
+
+res1$data <- res1$data %>% arrange(Year,First_Author)
+
+forest(res1, header=c("Author,Year","Cohen's d [95% CI]"))
+
+```
+#--mean difference
+```{r}
+study_data <- data.frame(First_Author = Onset_Age$First_Author, Year = Onset_Age$Year, 
+  m1 = Onset_Age$OnsetAge_with_trauma_mean,
+  sd1 = Onset_Age$OnsetAge_with_trauma_sd,
+  n1 = Onset_Age$N_PT_with_trauma,
+  m2 = Onset_Age$OnsetAge_without_trauma_mean,
+  sd2 = Onset_Age$OnsetAge_without_trauma_sd,
+  n2 = Onset_Age$N_PT_without_trauma
+)
+
+# Calculate the mean differences and variance
+study_data$mean_diff <- study_data$m1 - study_data$m2
+study_data$variance <- (study_data$sd1^2 / study_data$n1) + (study_data$sd2^2 / study_data$n2)
+
+# Perform the meta-analysis using mean differences
+res2 <- rma(yi = mean_diff, vi = variance, data = study_data, slab=paste(First_Author, Year, sep=", "))
+
+
+res3 <- rma(yi = mean_diff, vi = variance, data = study_data, method = "FE")
+# Display the results
+print(res2)
+print(res3)
+
+mlabfun <- function(text, res) {
+   list(bquote(paste(.(text),
+      " (Q = ", .(formatC(res$QE, digits=2, format="f")),
+      ", df = ", .(res$k - res$p),
+      ", p ", .(metafor:::.pval(res$QEp, digits=2, showeq=TRUE, sep=" ")), "; ",
+      I^2, " = ", .(formatC(res$I2, digits=1, format="f")), "%, ",
+      tau^2, " = ", .(formatC(res$tau2, digits=2, format="f")), ")")))}
+
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/age of onset/Age of onset.jpg", width =3000, heigh = 2000, res=300)
+forest(res2, header=c("Author,Year","MD [95% CI]"), xlim = c(-140,40),
+       ilab=cbind(n1,m1,sd1,n2,m2,sd2
+            ),ilab.xpos=c(-85,-75,-65,-55,-45,-35),mlab=mlabfun("RE Model for All Studies", res2),xlab="Mean Difference")
+
+op <- par(cex=1, font=2)
+text(c(-85,-75,-65,-55,-45,-35),18,c("N","Mean","SD","N","Mean","SD"))
+text(x = c(-75,-45), y=19, c("Exposed","Non-Exposed"))
+
+dev.off
+
+```
+
+
+# charateristics of studies
+```{r}
+sample_size <- sum(dat1$N_PT_with_trauma) + sum(dat1$N_PT_without_trauma)
+with_trauma <- sum(dat1$N_PT_with_trauma)  
+without_trauma <- sum(dat1$N_PT_without_trauma)
+
+```
+
+
+
+# forest plotting
+```{r}
+# Combine Author and Year into a new column
+Onset_Age$Author_Year <- paste(Onset_Age$First_Author, Onset_Age$Year, sep = ", ")
+Onset_Age$Year <- as.numeric(Onset_Age$Year)
+custom_order <- order(Onset_Age$Year, substr(Onset_Age$First_Author, 1, 1))
+#res1$data <- res1$data %>% arrange(desc(Year))
+custom_order <- order(Onset_Age$Year, substr(Onset_Age$Author, 1, 1))
+# Convert custom_order to a factor with custom levels
+Onset_Age$Author_Year <- factor(Onset_Age$Author_Year, levels = Onset_Age$Author_Year[custom_order])
+
+
+summary_stats <- summary(res2)
+# Extract Q test statistic, p-value, I-squared (I²), and tau-squared (τ²)
+Q_statistic <- summary_stats$QE
+p_value <- summary_stats$pval
+I_squared <- summary_stats$I2
+tau_squared <- summary_stats$tau2
+
+forest(res2, 
+       slab = Onset_Age$Author_Year,  # Labels for each study (assuming 'slab' contains study labels)
+       xlim = c(6, 6),       # Adjust the x-axis limits as needed
+       ylim = c(-3, 19),       # Adjust the y-axis limits as needed
+       header = "Studies",    # Header for the forest plot
+       refline = 0,           # Add a reference line at zero (no effect)
+      order = custom_order,  # Apply the custom order
+       cex = 0.7              # Adjust the font size
+)
+
+# Add Q test, p-value, I-squared (I²), and tau-squared (τ²) as text annotations
+
+```
+#---Onset Age---#
+```{r}
+AgeData <- Onset_Age
+colnames(AgeData)[c(7,8,16:21)] <- c("Author", "Year", "NT", "NNT","MeanT", "SDT", "MeanNT", "SDNT")
+
+AgeData1 <- escalc(measure="MD", m1i=MeanT, m2i=MeanNT, sd1i=SDT, sd2i=SDNT, n1i=NT, n2i=NNT, data=AgeData)
+
+resAge <- rma(yi, vi, data=AgeData1, slab=paste(Author, Year, sep=", "))
+
+
+
+forest(res2, header=c("Author,Year","MD [95% CI]"),)
+forest(res2, 
+       slab = AgeData$Author_Year,  # Labels for each study (assuming 'slab' contains study labels)
+       # Adjust the y-axis limits as needed
+       header=c("Author,Year","MD [95% CI]"),    # Header for the forest plot           # Add a reference line at zero (no effect)
+                  # Adjust the font size
+)
+```
+#--prediction interval--
+```{r}
+compute_prediction_interval <- function(res, df, alpha = 0.05) {
+  lower_bound <- res$b - qt(p = alpha / 2, df = df-1, lower.tail = FALSE) * sqrt((res$se)^2 + res$tau2)
+  upper_bound <- res$b + qt(p = alpha / 2, df = df-1, lower.tail = FALSE) * sqrt((res$se)^2 + res$tau2)
+  return(c(lower_bound, upper_bound))
+}
+
+compute_prediction_interval(res2, df = 15)
+```
+
+
+
+
+
+#---publication bias---
+```{r}
+ 
+egger_test <- regtest(res2)
+egger_test
+
+fsn(yi = mean_diff, vi = variance, data = study_data, type = "Orwin", target = -0.01)
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/age of onset/age of onset FunnelPlot.jpg", width =3000, heigh = 2000, res=300)
+metafor::funnel(res2)
+
+
+```
+# --- leave one out analysis---
+```{r}
+
+df <- leave1out(res2)
+min_row <- df[df$estimate == min(df$estimate), ]
+min_ci_lb <- min_row$ci.lb
+min_ci_ub <- min_row$ci.ub
+cat("The minium of MD is",min(df$estimate),":", min_ci_lb, "-", min_ci_ub)
+
+max_row <- df[df$estimate == max(df$estimate), ]
+max_ci_lb <- max_row$ci.lb
+max_ci_ub <- max_row$ci.ub
+cat("The maximum of MD is",max(df$estimate),":", max_ci_lb, "-", max_ci_ub)
+
+
+
+```
+
+```{r}
+forest_data <- data.frame(study = df$slab,
+  estimate = df$estimate,
+  ci.lb = df$ci.lb,
+  ci.ub = df$ci.ub
+)
+
+
+# Assuming 'study' is a categorical variable (factor or character)
+leave1out <- ggplot(forest_data, aes(x=estimate, y=study,xmin=ci.lb, xmax=ci.ub)) +
+  geom_point() +
+  geom_errorbarh(height=0.1) +
+  scale_y_discrete(labels=forest_data$study) +
+  labs(title='Leave one out analysis', x='Pooled Effect Size', y='Study') +
+  geom_vline(xintercept=0, color='black', linetype='dashed', alpha=0.5) +
+  theme_minimal()
+leave1out
+
+```
+
+
