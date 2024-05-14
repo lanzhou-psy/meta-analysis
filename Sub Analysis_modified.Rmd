@@ -1,0 +1,888 @@
+---
+title: "Subgroup Analysis"
+author: "Pengyuan Yang"
+date: "2023-05-25"
+output: html_document
+---
+
+
+
+
+```{r}
+library(readxl)
+library(writexl)
+library(metafor)
+library(dplyr)
+```
+
+# read data--
+```{r}
+SubData <- read_xlsx("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Preprocessed/LogORData_all_0205.xlsx")
+df_num <- read_excel("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Main Analysis/article number.xlsx")
+
+#SubData <- merge(SubData,df_num,by = c("First_Author", "Year"), all.x = FALSE)
+#non_duplicates_df1 <- anti_join(df_num,SubData, by = c("First_Author", "Year"))
+
+# Print or explore the non-duplicates
+#print(non_duplicates_df1)
+
+
+colnames(SubData)[c(1,2,3,76)] <- c("Author", "Year", "Study","Design")
+SubData <- subset(SubData, SubData$Author!= "Dennison et al.") 
+SubData <- subset(SubData, !(Author == "Chen et al." & Year == "2022"))
+#Exclude outliers
+
+```
+
+#-----Data Preprocess-----#
+```{r}
+
+Sublist <- list()
+
+names <- c("PA","EA","EN","SA","PN","BL","PLD","PS","PD","AP","NL","AB","DM")
+NRow <- rep(NA,13)
+i=1
+while (i<=13) {
+  Sublist[[i]] <- list()
+  df <- SubData[,c(1:32,(36+3*(i-1)):(38+3*(i-1)),75:88)]
+  df <- df[complete.cases(df[,33:35]),]
+  # Assuming df is your data frame
+  # Assuming df is your data frame
+  df[, 33:35] <- lapply(df[, 33:35], as.numeric)
+  df[,50] <- ((df[,35]-df[,34])/( 1.96*2))^2
+  df$Trauma <- rep(names[i],nrow(df))
+  colnames(df)[c(33:35,50)] <- c("LogOR","LogOR_LCI","LogOR_UCI","vi")
+  NRow[i] <- nrow(df)
+  Sublist[[i]] <- df
+  i=i+1
+}
+
+names(Sublist) <- names
+Sublist <- Sublist[-c(9,13)]  # excluded PD and DM
+NRow <- NRow[-c(9,13)]
+
+saveRDS(Sublist, "C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/SubData.RData")
+
+
+library(dplyr)
+library(tidyr)
+
+# Combine the list of data frames into a single dataframe
+LongDataFrame <- bind_rows(Sublist, .id = "Trauma")
+
+write.csv(LongDataFrame,"C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/longsubdata.csv")
+```
+
+#-----Data Analysis-----#
+```{r}
+SubData <- readRDS("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/SubData.RData")
+
+SubRes <- list()
+
+i=1
+while (i<=11) {
+  SubRes[[i]] <- list()
+  SubRes[[i]] <- rma(yi=LogOR, vi=vi, data=SubData[[i]])
+  i=i+1
+}
+
+names(SubRes) <- c("PA","EA","EN","SA","PN","BL","PLD","PS","AP","NL","AB")
+
+SubBind <- dplyr::bind_rows(SubData)
+#SubBind$Trauma <- factor(SubBind$Trauma, levels = c("AB","NL","PS","PLD","BL","PN","SA","EN","EA","PA","AP"))
+
+traumaDim <- c("AB","NL","PS","PLD","BL","PN","SA","EN","EA","PA","AP")
+
+orderList <- lapply(traumaDim, function(x) subset(SubBind, Trauma==x))
+SubBind <- orderList[[1]][order(orderList[[1]]$Year, orderList[[1]]$Author,decreasing = TRUE),]
+
+for (i in 2:length(orderList)){
+  SubBind <- rbind(SubBind,
+              orderList[[i]][order(orderList[[i]]$Year, orderList[[i]]$Author,decreasing = TRUE),])
+}
+
+SubBind$Trauma <- factor(SubBind$Trauma, levels = c("AB","NL","AP","PS","PLD","BL","PN","SA","EN","EA","PA"))
+
+ResBind <- rma(yi=LogOR, vi=vi, data=SubBind, slab=paste(Author, Year, sep=", "))
+
+
+mlabfun <- function(text, res) {
+   list(bquote(paste(.(text),
+      " (Q = ", .(formatC(res$QE, digits=2, format="f")),
+      ", df = ", .(res$k - res$p),
+      ", p ", .(metafor:::.pval(res$QEp, digits=2, showeq=TRUE, sep=" ")), "; ",
+      I^2, " = ", .(formatC(res$I2, digits=1, format="f")), "%, ",
+      tau^2, " = ", .(formatC(res$tau2, digits=2, format="f")), ")")))}
+
+Trauma <- c("Physical Abuse", "Emotional Abuse", "Emotional Neglect", "Sexual Abuse", "Physical Neglect", "Bullying", "Parental Loss/Divorce", "Parental Separation","Antipathy", "Neglect", "Abuse")
+
+#Plot
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/ForestplotSub_0305.jpg", width =3000, heigh = 25000, res=300)
+
+# sum(NRow = max +6)
+forest(ResBind, at=log(c(0.25, 1, 4, 40)), atransf=exp, xlim=c(-11,8), level=95,
+       cex=0.7, efac=c(0.1,0.1),ylim=c(2, sum(NRow)+46), 
+       order=Trauma, 
+       rows=c(3:(NRow[11]+2), (NRow[11]+7):(NRow[11]+NRow[10]+6), (NRow[11]+NRow[10]+11):(NRow[11]+NRow[10]+NRow[9]+10),
+              (NRow[11]+NRow[10]+NRow[9]+15):(NRow[11]+NRow[10]+NRow[9]+NRow[8]+14), (NRow[11]+NRow[10]+NRow[9]+NRow[8]+19):(NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+18),
+              (NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+23):(NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+22), 
+              (NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+27):(NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+26), 
+              (NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+31):(NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+NRow[4]+30),
+              (NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+NRow[4]+35):(NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+NRow[4]+NRow[3]+34),
+              (NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+NRow[4]+NRow[3]+39):(NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+NRow[4]+NRow[3]+NRow[2]+38), (NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+NRow[4]+NRow[3]+NRow[2]+43):(NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+NRow[4]+NRow[3]+NRow[2]+NRow[1]+42)),header=c("Author,Year","Odds Ratio [95% CI]"), xlab="Odds Ratio (Log scale)", addfit=FALSE,new.page=TRUE)
+
+### switch to bold italic font
+op <- par(cex=0.75, font=2)
+par(font=4)
+ 
+### add text for the subgroups
+text(-11, c(NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+NRow[4]+NRow[3]+NRow[2]+NRow[1]+43,NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+NRow[4]+NRow[3]+NRow[2]+39,NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+NRow[4]+NRow[3]+35,NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+NRow[4]+31,NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+27,NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+23,NRow[11]+NRow[10]+NRow[9]+NRow[8]+NRow[7]+19,NRow[11]+NRow[10]+NRow[9]+NRow[8]+15,NRow[11]+NRow[10]+NRow[9]+11,NRow[11]+NRow[10]+7,NRow[11]+3), pos=4, 
+     c("Physical Abuse", "Emotional Abuse", "Emotional Neglect", "Sexual Abuse", "Physical Neglect", "Bullying", "Parental Death", "Parental Separation","Antipathy", "Neglect","Abuse"))
+
+### set par back to the original settings
+par(op)
+ 
+### fit random-effects model in the three subgroups
+ 
+### add summary polygons for the three subgroups
+addpoly(SubRes[[1]], row=NRow[11] + NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+NRow[4]+NRow[3]+NRow[2]+41.5, mlab= mlabfun("RE Model for subgroup", SubRes[[1]]))
+addpoly(SubRes[[2]], row=NRow[11] + NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+NRow[4]+NRow[3]+37.5, mlab= mlabfun("RE Model for subgroup", SubRes[[2]]))
+addpoly(SubRes[[3]], row=NRow[11] + NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+NRow[4]+33.5, mlab= mlabfun("RE Model for subgroup", SubRes[[3]]))
+addpoly(SubRes[[4]], row= NRow[11] +NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+NRow[5]+29.5, mlab= mlabfun("RE Model for subgroup", SubRes[[4]]))
+addpoly(SubRes[[5]], row= NRow[11] +NRow[10]+NRow[9]+NRow[8]+NRow[7]+NRow[6]+25.5, mlab= mlabfun("RE Model for subgroup", SubRes[[5]]))
+addpoly(SubRes[[6]], row= NRow[11] +NRow[10]+NRow[9]+NRow[8]+NRow[7]+21.5, mlab= mlabfun("RE Model for subgroup", SubRes[[6]]))
+addpoly(SubRes[[7]], row= NRow[11] +NRow[10]+NRow[9]+NRow[8]+17.5, mlab= mlabfun("RE Model for subgroup", SubRes[[7]]))
+addpoly(SubRes[[8]], row= NRow[11] +NRow[10]+NRow[9]+13.5, mlab= mlabfun("RE Model for subgroup", SubRes[[8]]))
+addpoly(SubRes[[9]], row= NRow[11] + NRow[10]+9.5, mlab= mlabfun("RE Model for subgroup", SubRes[[9]]))
+addpoly(SubRes[[10]], row= NRow[11]+5.5, mlab= mlabfun("RE Model for subgroup", SubRes[[10]]))
+
+addpoly(SubRes[[11]], row= 1.5, mlab= mlabfun("RE Model for subgroup", SubRes[[11]]))
+
+dev.off
+
+
+#Print results
+Trauma <- c("Physical Abuse", "Emotional Abuse", "Emotional Neglect", "Sexual Abuse", "Physical Neglect", "Bullying", "Parental Loss/Divorce", "Parental Separation","Antipathy", "Neglect", "Abuse")
+OR <- rep(NA,11)
+OR_LCI <- rep(NA,11)
+OR_UCI <- rep(NA,11)
+
+i=1
+while (i<=11) {
+  OR[i] <- round(exp(SubRes[[i]][[1]]), digits = 2)
+  OR_LCI[i] <- round(exp(SubRes[[i]][[6]]), digits = 2)
+  OR_UCI[i] <- round(exp(SubRes[[i]][[7]]), digits = 2)
+  i=i+1
+}
+
+SubResDf <- data.frame(Trauma, OR, OR_LCI, OR_UCI)
+```
+#--- model summary
+```{r}
+# Create a list to store model summaries
+SubRes <- list()
+
+i <- 1
+while (i <= 11) {
+  # Assuming LogOR and vi are columns in SubData[[i]]
+  SubRes[[i]] <- rma(yi = SubData[[i]]$LogOR, vi = SubData[[i]]$vi)
+  i <- i + 1
+}
+
+# Assign names to the list
+names(SubRes) <- c("PA","EA","EN","SA","PN","BL","PLD","PS","AP","NL","AB")
+
+# Create an empty data frame to store results
+result_df <- data.frame(
+  Model = character(length(SubRes)),
+  k = numeric(length(SubRes)),
+  OR = numeric(length(SubRes)),
+  ci_lb = numeric(length(SubRes)),
+  ci_ub = numeric(length(SubRes)),
+  pval = numeric(length(SubRes)),
+  I2 = numeric(length(SubRes)),
+  Q = numeric(length(SubRes)),
+  Qp = numeric(length(SubRes))
+)
+
+# Fill in the data frame with results
+for (i in seq_along(SubRes)) {
+  result_df[i, "Model"] <- names(SubRes)[i]
+  result_df[i, "k"] <- SubRes[[i]]$k
+  result_df[i, "OR"] <- exp(SubRes[[i]]$beta)
+  result_df[i, "ci_lb"] <- exp(SubRes[[i]]$ci.lb)
+  result_df[i, "ci_ub"] <- exp(SubRes[[i]]$ci.ub)
+  result_df[i, "pval"] <- SubRes[[i]]$pval
+  result_df[i, "I2"] <- SubRes[[i]]$I2
+  result_df[i, "Q"] <- SubRes[[i]]$QE
+  result_df[i, "Qp"] <- SubRes[[i]]$QEp
+}
+
+# Print the resulting data frame
+print(result_df)
+
+
+```
+#---prediction interval---
+```{r}
+# Create a list to store model summaries
+SubRes <- list()
+
+i <- 1
+while (i <= 11) {
+  # Assuming LogOR and vi are columns in SubData[[i]]
+  SubRes[[i]] <- rma(yi = SubData[[i]]$LogOR, vi = SubData[[i]]$vi)
+  i <- i + 1
+}
+
+# Function to compute prediction intervals
+compute_prediction_interval <- function(res, df, alpha = 0.05) {
+  lower_bound <- exp(res$b - qt(p = alpha / 2, df = df - 1, lower.tail = FALSE) * sqrt((res$se)^2 + res$tau2))
+  upper_bound <- exp(res$b + qt(p = alpha / 2, df = df - 1, lower.tail = FALSE) * sqrt((res$se)^2 + res$tau2))
+  return(c(lower_bound, upper_bound))
+}
+
+# Assign names to the list
+names(SubRes) <- c("PA", "EA", "EN", "SA", "PN", "BL", "PLD", "PS", "AP", "NL", "AB")
+
+# Create an empty data frame to store results
+result_df <- data.frame(
+  Model = character(length(SubRes)),
+  PI_lb = numeric(length(SubRes)),
+  PI_ub = numeric(length(SubRes)),
+  stringsAsFactors = FALSE
+)
+
+# Calculate prediction intervals for each model
+for (i in seq_along(SubRes)) {
+  result_df$Model[i] <- names(SubRes)[i]
+  pi_bounds <- compute_prediction_interval(SubRes[[i]], df = SubRes[[i]]$k)
+  result_df$PI_lb[i] <- pi_bounds[1]
+  result_df$PI_ub[i] <- pi_bounds[2]
+}
+
+# Print the resulting data frame
+print(result_df)
+
+
+
+
+```
+
+
+#---leave 1 out analyses
+```{r}
+# Initialize a list to store results
+SubRes <- list()
+
+# Loop through each dataset and calculate the pooled OR and CI
+for (i in 1:11) {
+  SubRes[[i]] <- rma(yi = SubData[[i]]$LogOR, vi = SubData[[i]]$vi)
+}
+
+# Assign names to the list
+names(SubRes) <- c("PA", "EA", "EN", "SA", "PN", "BL", "PLD", "PS", "AP", "NL", "AB")
+
+# Create an empty data frame to store results
+result_df <- data.frame(
+  Model = character(length(SubRes)),
+  min_OR = numeric(length(SubRes)),
+  min_ci_lb = numeric(length(SubRes)),
+  min_ci_ub = numeric(length(SubRes)),
+  max_OR = numeric(length(SubRes)),
+  max_ci_lb = numeric(length(SubRes)),
+  max_ci_ub = numeric(length(SubRes))
+)
+
+# Fill in the data frame with results
+for (i in seq_along(SubRes)) {
+  result_df[i, "Model"] <- names(SubRes)[i]
+  result_df[i, "min_OR"] <- exp(SubRes[[i]]$estimate[which.min(SubRes[[i]]$estimate)])
+  result_df[i, "min_ci_lb"] <- exp(SubRes[[i]]$ci.lb[which.min(SubRes[[i]]$estimate)])
+  result_df[i, "min_ci_ub"] <- exp(SubRes[[i]]$ci.ub[which.min(SubRes[[i]]$estimate)])
+  result_df[i, "max_OR"] <- exp(SubRes[[i]]$estimate[which.max(SubRes[[i]]$estimate)])
+  result_df[i, "max_ci_lb"] <- exp(SubRes[[i]]$ci.lb[which.max(SubRes[[i]]$estimate)])
+  result_df[i, "max_ci_ub"] <- exp(SubRes[[i]]$ci.ub[which.max(SubRes[[i]]$estimate)])
+}
+
+# Print the resulting data frame
+print(result_df)
+
+```
+
+
+#---charateristics--
+```{r}
+# get the sample size for each study
+
+result_sample <- SubBind %>%
+  group_by(Trauma) %>%
+  summarize(Sum_Sample_Size = sum(Sample.Size_included..N.., na.rm = TRUE))
+
+# Display the result
+print(result_sample)
+
+
+```
+
+---meta regression as male percentages
+```{r}
+# Create a list to store Egger's test results
+SubData <- readRDS("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/SubData.RData")
+i <- 1
+while (i <= 11) {
+  # Assuming LogOR and vi are columns in SubData[[i]]
+  SubData[[i]]$Male_ratio <- as.numeric(SubData[[i]]$Male_ratio)
+  model <- rma(yi = LogOR, vi = vi, mods = ~ Male_ratio, data = SubData[[i]])
+  
+  i <- i + 1
+}
+
+
+mr_SA <- rma(yi = LogOR, vi = vi, mods = ~ Male_ratio, data = SubData[["SA"]])
+
+summary(mr_SA)
+
+mr_PA <- rma(yi = LogOR, vi = vi, mods = ~ Male_ratio, data = SubData[["PA"]])
+
+summary(mr_PA)
+
+mr_EA <- rma(yi = LogOR, vi = vi, mods = ~ Male_ratio, data = SubData[["EA"]])
+
+summary(mr_EA)
+
+mr_AB <- rma(yi = LogOR, vi = vi, mods = ~ Male_ratio, data = SubData[["AB"]])
+summary(mr_AB)
+
+mr_PN <- rma(yi = LogOR, vi = vi, mods = ~ Male_ratio, data = SubData[["PN"]])
+
+summary(mr_PN)
+
+mr_EN <- rma(yi = LogOR, vi = vi, mods = ~ Male_ratio, data = SubData[["EN"]])
+summary(mr_EN)
+
+mr_NL <- rma(yi = LogOR, vi = vi, mods = ~ Male_ratio, data = SubData[["NL"]])
+summary(mr_NL)
+
+mr_BL <- rma(yi = LogOR, vi = vi, mods = ~ Male_ratio, data = SubData[["BL"]])
+summary(mr_BL)
+
+mr_PLD <- rma(yi = LogOR, vi = vi, mods = ~ Male_ratio, data = SubData[["PLD"]])
+summary(mr_PLD)
+
+mr_PS <- rma(yi = LogOR, vi = vi, mods = ~ Male_ratio, data = SubData[["PS"]])
+summary(mr_PS)
+
+mr_AP <- rma(yi = LogOR, vi = vi, mods = ~ Male_ratio, data = SubData[["AP"]])
+summary(mr_AP)
+
+
+
+```
+
+
+
+
+#---Egger test for publication bias
+```{r}
+# Create a list to store Egger's test results
+EggerResults <- list()
+
+i <- 1
+while (i <= 11) {
+  # Assuming LogOR and vi are columns in SubData[[i]]
+  model <- rma(yi = SubData[[i]]$LogOR, vi = SubData[[i]]$vi)
+  
+  # Perform Egger's test
+  egger_test <- regtest(model)
+  
+  # Store the Egger's test results in the list
+  EggerResults[[i]] <- egger_test
+  
+  i <- i + 1
+}
+
+# Assign names to the list
+names(EggerResults) <- c("PA", "EA", "EN", "SA", "PN", "BL", "PLD", "PS","AP", "NL", "AB")
+
+# Print Egger's test results
+for (name in names(EggerResults)) {
+  cat("Egger's Test for Model", name, ":\n")
+  print(EggerResults[[name]])
+  cat("\n")
+}
+
+```
+# ---Orwin's Fail-Safe N
+```{r}
+
+OrwinResults <- list()
+
+i <- 1
+while (i <= 11) {
+  
+  # Calculate Orwin's Fail-Safe N using fsn() with specified arguments
+  failsafe_N <- fsn(yi = SubData[[i]]$LogOR, vi = SubData[[i]]$vi, data = SubData[[i]], type = "Orwin", target = 0.1)
+  
+  # Store the results in the list
+  OrwinResults[[i]] <- failsafe_N$fsn
+  
+  i <- i + 1
+}
+
+# Assign names to the list
+names(OrwinResults) <- c("PA", "EA", "EN", "SA", "PN", "BL", "PLD", "PS","AP", "NL", "AB")
+
+# Print Orwin's Fail-Safe N
+for (name in names(OrwinResults)) {
+  cat("Orwin's Fail-Safe N for Model", name, ":\n")
+  print(OrwinResults[[name]])
+  cat("\n")
+}
+
+
+```
+
+#--funnel plot for each subtypes--
+```{r}
+SubData <- readRDS("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/SubData.RData")
+
+i <- 1
+while (i <= 11) {
+  # Assign dynamic names to the list based on the index i
+  name <- c("PA", "EA", "EN", "SA", "PN", "BL", "PLD", "PS", "AP", "NL", "AB")[i]
+  # Save the funnel plot with a dynamic name
+  jpeg(paste0("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/publication bias/FunnelPlot_", name, ".jpg"), width = 3000, height = 2000, res = 350)
+  
+  # Assuming LogOR and vi are columns in SubData[[i]]
+  model <- rma(yi = SubData[[i]]$LogOR, vi = SubData[[i]]$vi)
+  
+  # Plot the funnel plot
+  metafor::funnel(model,main = paste("Funnel Plot for", name))
+  
+
+  dev.off()
+  
+  i <- i + 1
+}
+
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
+#--excluding poor quality studies
+```{r}
+# 
+SubData <- readRDS("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/SubData.RData")
+SubData$SA <- subset(SubData$SA, !(Author == "Friedman & Harrison"))
+Res.SA <- rma(yi = SubData$SA$LogOR, vi = SubData$SA$vi)
+
+Res.SA
+
+cat("sexual abuse after excluding one article", exp(Res.SA$beta), ":95%CI [",exp(Res.SA$ci.lb),",",exp(Res.SA$ci.ub),"]")
+
+SubData$PLD <- subset(SubData$PLD, !(Author == "Styla et al."))
+Res.PLD <- rma(yi = SubData$PLD$LogOR, vi = SubData$PLD$vi)
+
+Res.PLD
+
+cat("Parental death after excluding one article", exp(Res.PLD$beta), ":95%CI [",exp(Res.PLD$ci.lb),",",exp(Res.PLD$ci.ub),"]")
+ 
+ 
+```
+
+
+
+
+
+
+
+
+#---Dimensional approach---
+```{r}
+
+longsubdata <- read.csv("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/longsubdata.csv")
+df_num <- read_excel("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Main Analysis/article number.xlsx")
+df_num$Author <- df_num$First_Author
+longsubdata<- merge(longsubdata,df_num,by = c("Author", "Year"), all.x = FALSE)
+# exclude the subtypes, parental separation, parental death, parental antipathy, discrimination
+
+longsubdata <- longsubdata %>%
+  filter(!Trauma %in% c("DM", "PLD","PS","AP"))
+
+
+longsubdata <- escalc(measure="OR", yi=LogOR, vi=vi, data=longsubdata, slab=paste("Study", Number))
+
+longsubdata <- longsubdata %>%
+  mutate(threat = ifelse(Trauma %in% c("PA", "EA", "BL", "SA", "AB"), 1, 0))
+
+longsubdata <- longsubdata %>%
+  mutate(deprivation = ifelse(Trauma %in% c("NL", "PN", "EN"), 1, 0))
+
+longsubdata$threat <- factor(longsubdata$threat)
+longsubdata$deprivation <- factor(longsubdata$deprivation)
+
+longsubdata$LogOR <- as.numeric(longsubdata$LogOR)
+longsubdata$vi <- as.numeric(longsubdata$vi)
+
+```
+
+##---1. threat and forest plot
+```{r}
+threat <- longsubdata[longsubdata$threat==1,]
+# delete the samples with mutiple articles
+exclude_values <- c("95a","130b", "144a", "144b", "179a", "180a", "185b")
+
+threat <- subset(threat, !(Number %in% exclude_values))
+
+## sort the author year
+threat <-  threat[order(threat$Year, threat$Author,decreasing = TRUE),]
+threat$Trauma <- factor(threat$Trauma)
+
+
+res1 <- rma.mv(yi=LogOR, vi, data=threat, random = ~ 1 |Number/Trauma, slab=paste(Author, Year, sep=", "))
+summary(res1)
+
+#Aggregate studies to the study level
+agg <- rma.mv(yi=LogOR, V=vcov(res1, type="obs"), mods = ~ 0 + factor(Number), data=threat, slab=paste(Author, Year, sep=", "))
+
+threat1 <- threat %>%
+     distinct(Study, .keep_all = TRUE)
+threat1$yi <- coef(agg)
+
+res.th <- rma.mv(yi, V=vcov(agg), method="EE", data = threat1, slab=paste(Author, Year, sep=", "))
+summary(res.th)
+
+
+cat("Threat", exp(res.th$beta), ":95%CI [",exp(res.th$ci.lb),",",exp(res.th$ci.ub),"]")
+
+library(gtools)
+threat1$Number <- factor(threat1$Number, levels = mixedsort(unique(threat1$Number)))
+threat1 <- threat1[order(threat1$Number), ]
+cat(paste(threat1$Number, collapse = ", "), "\n")
+
+write.csv(threat1, "C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/threat_agg.csv")
+
+compute_prediction_interval <- function(res, df, alpha = 0.05) {
+  lower_bound <- exp(res$b - qt(p = alpha / 2, df = df - 1, lower.tail = FALSE) * sqrt((res$se)^2 + res$sigma2[1]))
+  upper_bound <- exp(res$b + qt(p = alpha / 2, df = df - 1, lower.tail = FALSE) * sqrt((res$se)^2 + res$sigma2[1]))
+  return(c(lower_bound, upper_bound))
+}
+cat(" the smaple size of Threat:",sum(threat1$Sample.Size_included..N.., na.rm = TRUE))
+# sample size
+cat(" 95% PI of Threat is:",compute_prediction_interval(res1, 306, alpha = 0.05))
+
+# publicatio bias
+set.seed(123)
+cat(" fail safe N for threat is:")
+fsn(yi, vi, data=threat1, type = "Orwin", target= 0.1)
+
+egg_th <- rma.mv(yi ~ 1 + sqrt(vi), vi, random = ~ 1 | Study/Trauma, data = threat, test = "t")
+summary(egg_th)
+```
+#--leave 1 out analysis
+```{r}
+leave_one_out_analysis <- function(data, outcome, variance, Number) {
+  Number <- unique(data[[Number]])
+  num_studies <- length(Number)
+  
+  # Initialize matrices to store results
+  results <- matrix(NA, nrow = num_studies, ncol = 6, 
+                    dimnames = list(NULL, c("Study_ID", "Pooled_OR", "ci.lb", "ci_ub")))
+  
+  for (i in 1:num_studies) {
+    # Subset the data to leave out the i-th study
+    subset_data <- data[data[[Number]] != Number[i], ]
+    
+    # Fit the meta-analysis model without the i-th study
+    model <- rma.mv(yi = subset_data[[outcome]], V = subset_data[[variance]], 
+                    data = subset_data, random = ~ 1 |Number/Trauma,
+                    slab = paste(subset_data$Author, subset_data$Year, sep = ", "))
+    
+    # Obtain the pooled effect size
+    res <- summary(model)
+    pooled_effect <- coef(model)
+    ci_lb <- res$ci.lb
+    ci_ub <- res$ci.ub
+    p_value <- res$pval
+    
+    # Store the pooled effect size
+    results[i, ] <- c(study_ids[i], exp(pooled_effect), exp(ci_lb), exp(ci_ub))
+  }
+  return(results)
+}
+results <- leave_one_out_analysis(threat, LogOR, vi, Number)
+
+```
+
+
+
+##--2. deprivation and and forest plot
+```{r}
+deprivation <- longsubdata[longsubdata$deprivation==1,]
+
+res2 <- rma.mv(yi=LogOR, vi, data=deprivation, random = ~ 1 |Study/Trauma, slab=paste(Author, Year, sep=", "))
+summary(res2)
+
+#Aggregate studies to the study level
+agg_dp <- rma.mv(yi=LogOR, V=vcov(res2, type="obs"), mods = ~ 0 + factor(Number), data=deprivation, slab=paste(Author, Year, sep=", "))
+
+deprivation1 <- deprivation %>%
+     distinct(Study, .keep_all = TRUE)
+deprivation1$yi <- coef(agg_dp)
+
+res.dp <- rma.mv(yi, V=vcov(agg_dp), method="EE", data = deprivation1, slab=paste(Author, Year, sep=", "))
+summary(res.dp)
+
+write.csv(deprivation1, "C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/deprivation_agg.csv")
+
+cat("Deprivation", exp(res.dp$beta), ":95%CI [",exp(res.dp$ci.lb),",",exp(res.dp$ci.ub),"]")
+
+deprivation1$Number <- factor(deprivation1$Number, levels = mixedsort(unique(deprivation1$Number)))
+deprivation1 <- deprivation1[order(deprivation1$Number), ]
+cat(paste(deprivation1$Number, collapse = ", "), "\n")
+
+cat(" the smaple size of deprivation:",sum(deprivation1$Sample.Size_included..N.., na.rm = TRUE))
+
+cat(" prediction intervals:",compute_prediction_interval(res2, 139, alpha = 0.05))
+
+# publicatio bias
+set.seed(123)
+cat(" fail safe N for deprivation is:")
+fsn(yi, vi, data=deprivation1, type = "Orwin", target= 0.1)
+
+egg_dp <- rma.mv(yi ~ 1 + sqrt(vi), vi, random = ~ 1 | Study/Trauma, data = deprivation, test = "t")
+summary(egg_dp)
+```
+#--forest plot
+```{r}
+thNum <- nrow(threat1)
+dpNum <- nrow(deprivation1)
+
+### a little helper function to add Q-test, I^2, and tau^2 estimate info
+mlabfun <- function(text, res, levels) {
+   W <- diag(1/res$vi)
+   X <- model.matrix(res)
+   P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+   I2 <- 100 * res$sigma2[levels-1] / (sum(res$sigma2) + (res$k-res$p)/sum(diag(P)))
+  
+   list(bquote(paste(.(text),
+      " (Q = ", .(formatC(res$QE, digits=2, format="f")),
+      ", df = ", .(res$k - res$p),
+      ", p ", .(metafor:::.pval(res$QEp, digits=3, showeq=TRUE, sep=" ")), "; ",
+      I^2, " = ", .(formatC(I2, digits=1, format="f")), "%, ",
+      tau^2, " = ", .(formatC(res$sigma2[levels-1], digits=2, format="f")), ")")))}
+
+
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/Forestplot_threat1.jpg", width =3000, heigh = 8000, res=300)
+forest(res.th, at=log(c(0.25, 1, 4, 40)), xlim=c(-11,8), level=95, atransf = exp,
+     
+       cex=0.7, efac=c(0.4,0.4), 
+       order= Year, 
+       header=c("Author,Year","Odds Ratio [95% CI]"), xlab="Odds Ratio (Log scale)", mlab = mlabfun("Multilevel Model for All Studies", res1, 2))
+### set font expansion factor (as in forest() above) and use a bold font
+op <- par(cex=0.75, font=2)
+dev.off
+
+
+
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/Forestplot_deprivation1.jpg", width =3000, heigh = 5000, res=300)
+forest(res.dp, at=log(c(0.25, 1, 4, 40)), xlim=c(-11,8), level=95, atransf = exp,
+     
+       cex=0.7, efac=c(0.4,0.4), 
+       order= Year, 
+       header=c("Author,Year","Odds Ratio [95% CI]"), xlab="Odds Ratio (Log scale)", mlab = mlabfun("Multilevel Model for All Studies", res2, 2))
+### set font expansion factor (as in forest() above) and use a bold font
+op <- par(cex=0.75, font=2)
+dev.off
+```
+
+
+
+# test the difference between threat and deprivation
+```{r}
+com_df <- rbind(threat,deprivation)
+# Assuming com_df is your data frame
+com_df$Dimension <- ifelse(com_df$deprivation == 1, 1, 0)
+# Assuming com_df is your data frame
+com_df$Study_num <- ifelse(com_df$Dimension == 1, paste0(com_df$Number, "d"), paste0(com_df$Number, "t"))
+
+
+reg.dif <- rma.mv(yi=LogOR, vi, data=com_df, random = ~ 1 |Study_num/Number/Trauma, mods = ~factor(Dimension))
+summary(reg.dif)
+
+```
+
+#--Publication bias for the dimensional analyses
+
+```{r}
+#Egger's regression
+
+# Egger Test for threat
+res1_egg_mod_se <- rma.mv(yi~ 1 + sqrt(vi), vi, data=threat, random = ~ 1 |Number/Trauma,test = "t")
+summary(res1_egg_mod_se)
+
+# Egger Test for deprivation
+res2_egg_mod_se <- rma.mv(yi~ 1 + sqrt(vi), vi, data=deprivation, random = ~ 1 |Number/Trauma,test = "t")
+summary(res2_egg_mod_se)
+
+```
+
+```{r}
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/publication bias/FunnelPlot_threat_and_deprivation.jpg", width = 3000, height = 4000, res = 350)
+
+# Define the layout with two rows and one column
+par(mfrow = c(2, 1))
+
+# Plot the funnel plot for the threat dimension
+metafor::funnel(res.th, main = "Funnel Plot for Threat Dimension")
+
+# Plot the funnel plot for the deprivation dimension
+metafor::funnel(res.dp, main = "Funnel Plot for Deprivation Dimension")
+
+# Close the jpeg device
+dev.off()
+
+```
+# sensitivity analysis with Rho in threat
+
+```{r}
+rho.sens <- seq(0, 0.7, 0.1) # determine a set of rhos
+model.sens <- lapply(rho.sens, 
+                     function(x) 
+                       {V <- vcalc(vi, cluster=Number, obs=Trauma, 
+                                   data=threat, rho = x)
+                        res.rho <- rma.mv(yi=LogOR, V, 
+                                          data=threat, 
+                                          random = ~ 1 |Number/Trauma,
+                                          slab=paste(Author, Year, sep=", "))}) 
+
+# Prediction intervals
+Pred_int <- function(mod, lvl){
+  SE <- mod$se
+  tau2 <- mod$sigma2[lvl]
+  df <- mod$k - mod$p
+  result <- c(LCI=exp(mod$b - qt(0.975, df-1)*sqrt(SE^2+tau2)),
+              UCI=exp(mod$b + qt(0.975, df-1)*sqrt(SE^2+tau2)))
+  result
+}
+
+df_PI <- t(vapply(model.sens, function(mod) Pred_int(mod,1), numeric(2)))
+
+# Heterogeneity
+I2 <- function(res.rho){
+  W <- diag(1/res.rho$vi)
+  X <- model.matrix(res.rho)
+  P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+
+  100*res.rho$sigma2/(sum(res.rho$sigma2)+(res.rho$k-res.rho$p)/sum(diag(P)))
+}
+
+pooled.sens <- vapply(model.sens, function(mod) exp(mod$b), numeric(1))
+CIs.sens <- vapply(model.sens, function(mod) c(exp(mod$ci.lb),exp(mod$ci.ub)), numeric(2))
+
+
+# Result_overall
+result_overall <- data.frame(rho.sens, pooled.sens, CIs.sens,df_PI)
+
+
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/sensitivity analysis/roh_threat.jpg", width = 3000, height = 2000,res = 350)
+ggplot(result_overall,
+       aes(x = rho.sens,
+           y = pooled.sens)) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(mapping = aes(ymax = CIs.sens[2, ], ymin = CIs.sens[1, ]), width = 0.02, color = "blue") +
+  geom_errorbar(mapping = aes(ymax=UCI, ymin=LCI), width = 0.02, color = "green") +
+  geom_hline(yintercept = 1, color = "red", linetype = "dashed") +
+  ylim(c(0, 10)) +
+  scale_y_continuous(breaks = seq(0, 10, 1)) +
+  scale_x_continuous(breaks = seq(0, 0.95, 0.05)) +
+  labs(x = "Rho", y = "Pooled Odds Ratios", color = "Error Bars")+
+  scale_color_manual(values = c("CI" = "blue", "PI" = "green"),
+                     labels = c("95% Confidence Intervals", "95% Prediction Intervals"),
+                     name = "Intervals") + # Provide a name for the legend
+  theme(legend.position = "bottom") + # Move legend to the bottom
+  guides(color = guide_legend(override.aes = list(linetype = c("solid", "dashed")))) # Adjust linetype in legend
+
+dev.off()
+
+
+```
+
+# sensitivity analysis with Rho in deprivation
+```{r}
+rho.sens <- seq(0, 0.7, 0.1) # determine a set of rhos
+model.sens <- lapply(rho.sens, 
+                     function(x) 
+                       {V <- vcalc(vi, cluster=Number, obs=Trauma, 
+                                   data=deprivation, rho = x)
+                        res.rho <- rma.mv(yi=LogOR, V, 
+                                          data=deprivation, 
+                                          random = ~ 1 |Number/Trauma,
+                                          slab=paste(Author, Year, sep=", "))}) 
+
+# Prediction intervals
+Pred_int <- function(mod, lvl){
+  SE <- mod$se
+  tau2 <- mod$sigma2[lvl]
+  df <- mod$k - mod$p
+  result <- c(LCI=exp(mod$b - qt(0.975, df-1)*sqrt(SE^2+tau2)),
+              UCI=exp(mod$b + qt(0.975, df-1)*sqrt(SE^2+tau2)))
+  result
+}
+
+df_PI <- t(vapply(model.sens, function(mod) Pred_int(mod,1), numeric(2)))
+
+# Heterogeneity
+I2 <- function(res.rho){
+  W <- diag(1/res.rho$vi)
+  X <- model.matrix(res.rho)
+  P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+
+  100*res.rho$sigma2/(sum(res.rho$sigma2)+(res.rho$k-res.rho$p)/sum(diag(P)))
+}
+
+pooled.sens <- vapply(model.sens, function(mod) exp(mod$b), numeric(1))
+CIs.sens <- vapply(model.sens, function(mod) c(exp(mod$ci.lb),exp(mod$ci.ub)), numeric(2))
+
+
+# Result_overall
+result_overall <- data.frame(rho.sens, pooled.sens, CIs.sens,df_PI)
+
+
+jpeg("C:/Users/Lauren/Desktop/meta analysis/data analysis/output/Sub Analysis/sensitivity analysis/roh_deprivation.jpg", width = 3000, height = 2000,res = 350)
+ggplot(result_overall,
+       aes(x = rho.sens,
+           y = pooled.sens)) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(mapping = aes(ymax = CIs.sens[2, ], ymin = CIs.sens[1, ]), width = 0.02, color = "blue") +
+  geom_errorbar(mapping = aes(ymax=UCI, ymin=LCI), width = 0.02, color = "green") +
+  geom_hline(yintercept = 1, color = "red", linetype = "dashed") +
+  ylim(c(0, 10)) +
+  scale_y_continuous(breaks = seq(0, 10, 1)) +
+  scale_x_continuous(breaks = seq(0, 0.95, 0.05)) +
+  labs(x = "Rho", y = "Pooled Odds Ratios", color = "Error Bars")+
+  scale_color_manual(values = c("CI" = "blue", "PI" = "green"),
+                     labels = c("95% Confidence Intervals", "95% Prediction Intervals"),
+                     name = "Intervals") + # Provide a name for the legend
+  theme(legend.position = "bottom") + # Move legend to the bottom
+  guides(color = guide_legend(override.aes = list(linetype = c("solid", "dashed")))) # Adjust linetype in legend
+
+dev.off()
+
+
+```
+
+
